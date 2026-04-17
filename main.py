@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 BRAND_PURPLE_DARK = (10, 2, 20, 255)
 BRAND_PURPLE_LIGHT = (40, 15, 60, 255)
 NEON_PURPLE_GLOW = (180, 50, 255, 255)
-# UPDATED: Changed to a richer, warmer Goldenrod yellow
+# UPDATED: Richer, more golden yellow
 ACCENT_GOLD_GLOW = (218, 165, 32, 255) 
 GREYED_OUT_COLOR = (40, 40, 60, 150)
 
@@ -77,47 +77,64 @@ def get_month_title_position(month_cal, box_w, box_h, margin_x, margin_y):
         y_start, y_end = margin_y + (len(month_cal)-1) * box_h, margin_y + (len(month_cal)-1) * box_h + box_h
     return (x_start + x_end) // 2, (y_start + y_end) // 2
 
-def draw_centered_events(draw, coords, events, font, box_w, gap, is_grey=False):
+def draw_centered_events(draw, coords, events, font_path, box_w, gap, is_grey=False):
+    # FIXED: Logic to dynamically shrink text if many events exist
+    base_font_size = 25
     line_height = 34
-    all_chunks = []
     
+    all_lines = []
     for ev in events:
         t_str = format_time(ev['start'].get('dateTime'))
         summary = ev.get('summary', '').upper() if is_grey else ev.get('summary', '')
         line = f"{t_str} | {summary}" if t_str else summary
-        all_chunks.extend(wrap_text(line, font, box_w - 60))
-    
-    if not all_chunks: return
+        all_lines.append(line)
 
-    total_text_height = len(all_chunks) * line_height
-    # UPDATED: Increased the offset from 60 to 75 to give the date number more breathing room
-    available_height = (coords[3] - coords[1]) - 75 
-    start_y = coords[1] + 75 + (available_height - total_text_height) // 2
+    # Determine required font size to fit everything
+    current_size = base_font_size
+    current_font = ImageFont.truetype(font_path, current_size)
+    
+    # Wrap text and check height
+    def get_layout(f_size):
+        f = ImageFont.truetype(font_path, f_size)
+        lh = int(f_size * 1.35)
+        wrapped = []
+        for l in all_lines:
+            wrapped.extend(wrap_text(l, f, box_w - 40))
+        return wrapped, lh
+
+    chunks, lh = get_layout(current_size)
+    available_h = (coords[3] - coords[1]) - 70 # Offset for date number
+    
+    # Shrink font until height fits
+    while len(chunks) * lh > available_h and current_size > 14:
+        current_size -= 1
+        chunks, lh = get_layout(current_size)
+
+    if not chunks: return
+
+    final_font = ImageFont.truetype(font_path, current_size)
+    total_text_h = len(chunks) * lh
+    start_y = coords[1] + 65 + (available_h - total_text_h) // 2
     
     curr_y = start_y
-    for chunk in all_chunks:
-        # Safety check: Keep below the date number with extra buffer
-        if curr_y - 12 < coords[1] + 55: 
-            curr_y += line_height
-            continue
-        if curr_y + 12 > coords[3] - 10: 
-            break
-            
-        tw = font.getlength(chunk)
+    for chunk in chunks:
+        tw = final_font.getlength(chunk)
         bg_alpha = 60 if is_grey else 100
         text_alpha = 100 if is_grey else 255
         
-        draw.rounded_rectangle([coords[0]+(box_w-gap)//2 - tw//2 - 10, curr_y - 12, 
-                                coords[0]+(box_w-gap)//2 + tw//2 + 10, curr_y + 12], 
-                                radius=8, fill=(0, 0, 0, bg_alpha))
-        draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=font, fill=(255, 255, 255, text_alpha), anchor="mm")
-        curr_y += line_height
+        # Centered Pill Background
+        draw.rounded_rectangle([coords[0]+(box_w-gap)//2 - tw//2 - 8, curr_y - (lh//2) + 2, 
+                                coords[0]+(box_w-gap)//2 + tw//2 + 8, curr_y + (lh//2) - 2], 
+                                radius=6, fill=(0, 0, 0, bg_alpha))
+        
+        draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=final_font, fill=(255, 255, 255, text_alpha), anchor="mm")
+        curr_y += lh
 
 def create_image(events, now):
     img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE_DARK)
     draw = ImageDraw.Draw(img)
     
-    # Background Scanlines
+    # Background Scanlines Logic
     midnight_edges = (5, 0, 15, 255)
     max_diag = math.sqrt(960**2 + 540**2)
     for y in range(0, 1080, 4):
@@ -138,9 +155,8 @@ def create_image(events, now):
     gap = 12 
 
     title_f = ImageFont.truetype("ariblk.ttf", 185) 
-    # UPDATED: Reduced date number size from 34 to 30 for better padding
-    num_f = ImageFont.truetype("arial.ttf", 30) 
-    ev_f = ImageFont.truetype("arial.ttf", 25)
+    num_f = ImageFont.truetype("arial.ttf", 32) 
+    font_path = "arial.ttf"
 
     event_map = {d: [] for d in range(1, 32)}
     for e in events:
@@ -165,22 +181,22 @@ def create_image(events, now):
 
             if is_no_stream or (is_weekend and not has_events):
                 draw.rounded_rectangle(coords, radius=15, outline=(100, 100, 120, 50), width=2, fill=(20, 20, 30, 150))
-                draw.text((coords[0] + 15, coords[1] + 15), str(day), font=num_f, fill=(255, 255, 255, 60))
+                draw.text((coords[0] + 18, coords[1] + 18), str(day), font=num_f, fill=(255, 255, 255, 60))
                 
                 if is_no_stream:
                     no_stream_events = [ev for ev in day_events if "NO STREAM" in ev.get('summary', '').upper()]
-                    draw_centered_events(draw, coords, no_stream_events, ev_f, box_w, gap, is_grey=True)
+                    draw_centered_events(draw, coords, no_stream_events, font_path, box_w, gap, is_grey=True)
             else:
                 draw_heavy_neon_bloom(draw, coords, NEON_PURPLE_GLOW, intensity=10)
                 draw.rounded_rectangle(coords, radius=15, fill=(15, 5, 25, 200))
-                draw.text((coords[0] + 15, coords[1] + 15), str(day), font=num_f, fill=(255, 255, 255, 130))
-                draw_centered_events(draw, coords, day_events, ev_f, box_w, gap)
+                draw.text((coords[0] + 18, coords[1] + 18), str(day), font=num_f, fill=(255, 255, 255, 130))
+                draw_centered_events(draw, coords, day_events, font_path, box_w, gap)
 
     if today_data:
         draw_heavy_neon_bloom(draw, today_data, ACCENT_GOLD_GLOW, intensity=22)
         draw.rounded_rectangle(today_data, radius=15, fill=(50, 30, 10, 230))
-        draw.text((today_data[0] + 15, today_data[1] + 15), str(now.day), font=num_f, fill=(255, 255, 255, 255))
-        draw_centered_events(draw, today_data, event_map.get(now.day, []), ev_f, box_w, gap)
+        draw.text((today_data[0] + 18, today_data[1] + 18), str(now.day), font=num_f, fill=(255, 255, 255, 255))
+        draw_centered_events(draw, today_data, event_map.get(now.day, []), font_path, box_w, gap)
 
     title_text = now.strftime("%B").upper()
     tx, ty = get_month_title_position(month_cal, box_w, box_h, GLOBAL_MARGIN, GLOBAL_MARGIN)
