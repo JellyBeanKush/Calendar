@@ -76,6 +76,45 @@ def get_month_title_position(month_cal, box_w, box_h, margin_x, margin_y):
         y_start, y_end = margin_y + (len(month_cal)-1) * box_h, margin_y + (len(month_cal)-1) * box_h + box_h
     return (x_start + x_end) // 2, (y_start + y_end) // 2
 
+def draw_centered_events(draw, coords, events, font, box_w, gap, is_grey=False):
+    line_height = 34
+    all_chunks = []
+    
+    # 1. Prepare and wrap all lines first
+    for ev in events:
+        t_str = format_time(ev['start'].get('dateTime'))
+        summary = ev.get('summary', '').upper() if is_grey else ev.get('summary', '')
+        line = f"{t_str} | {summary}" if t_str else summary
+        all_chunks.extend(wrap_text(line, font, box_w - 60))
+    
+    if not all_chunks: return
+
+    # 2. Calculate total height and starting Y to center vertically
+    total_text_height = len(all_chunks) * line_height
+    # The "75" offset was originally for the date number; we center in the remaining space
+    available_height = (coords[3] - coords[1]) - 60 
+    start_y = coords[1] + 60 + (available_height - total_text_height) // 2
+    
+    # 3. Draw each chunk
+    curr_y = start_y
+    for chunk in all_chunks:
+        # Safety check: don't draw outside the box
+        if curr_y - 12 < coords[1] + 45: # Keep below the date number
+            curr_y += line_height
+            continue
+        if curr_y + 12 > coords[3] - 10: 
+            break
+            
+        tw = font.getlength(chunk)
+        bg_alpha = 60 if is_grey else 100
+        text_alpha = 100 if is_grey else 255
+        
+        draw.rounded_rectangle([coords[0]+(box_w-gap)//2 - tw//2 - 10, curr_y - 12, 
+                                coords[0]+(box_w-gap)//2 + tw//2 + 10, curr_y + 12], 
+                                radius=8, fill=(0, 0, 0, bg_alpha))
+        draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=font, fill=(255, 255, 255, text_alpha), anchor="mm")
+        curr_y += line_height
+
 def create_image(events, now):
     img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE_DARK)
     draw = ImageDraw.Draw(img)
@@ -130,53 +169,19 @@ def create_image(events, now):
                 draw.text((coords[0] + 15, coords[1] + 15), str(day), font=num_f, fill=(255, 255, 255, 60))
                 
                 if is_no_stream:
-                    curr_y = coords[1] + 75
-                    for ev in day_events:
-                        if "NO STREAM" in ev.get('summary', '').upper():
-                            chunk = ev['summary'].upper()
-                            tw = ev_f.getlength(chunk)
-                            draw.rounded_rectangle([coords[0]+(box_w-gap)//2 - tw//2 - 10, curr_y - 12, 
-                                                  coords[0]+(box_w-gap)//2 + tw//2 + 10, curr_y + 12], 
-                                                  radius=8, fill=(0, 0, 0, 60))
-                            draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255, 100), anchor="mm")
+                    no_stream_events = [ev for ev in day_events if "NO STREAM" in ev.get('summary', '').upper()]
+                    draw_centered_events(draw, coords, no_stream_events, ev_f, box_w, gap, is_grey=True)
             else:
                 draw_heavy_neon_bloom(draw, coords, NEON_PURPLE_GLOW, intensity=10)
                 draw.rounded_rectangle(coords, radius=15, fill=(15, 5, 25, 200))
                 draw.text((coords[0] + 15, coords[1] + 15), str(day), font=num_f, fill=(255, 255, 255, 130))
-
-                curr_y = coords[1] + 75
-                for ev in day_events:
-                    t_str = format_time(ev['start'].get('dateTime'))
-                    line = f"{t_str} | {ev['summary']}" if t_str else ev['summary']
-                    wrapped = wrap_text(line, ev_f, box_w - 60)
-                    for chunk in wrapped:
-                        if curr_y + 30 > coords[3]: break
-                        tw = ev_f.getlength(chunk)
-                        draw.rounded_rectangle([coords[0]+(box_w-gap)//2 - tw//2 - 10, curr_y - 12, 
-                                              coords[0]+(box_w-gap)//2 + tw//2 + 10, curr_y + 12], 
-                                              radius=8, fill=(0, 0, 0, 100))
-                        draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255), anchor="mm")
-                        curr_y += 34
+                draw_centered_events(draw, coords, day_events, ev_f, box_w, gap)
 
     if today_data:
         draw_heavy_neon_bloom(draw, today_data, ACCENT_GOLD_GLOW, intensity=22)
         draw.rounded_rectangle(today_data, radius=15, fill=(50, 30, 10, 230))
         draw.text((today_data[0] + 15, today_data[1] + 15), str(now.day), font=num_f, fill=(255, 255, 255, 255))
-        
-        curr_y = today_data[1] + 75
-        for ev in event_map.get(now.day, []):
-            t_str = format_time(ev['start'].get('dateTime'))
-            line = f"{t_str} | {ev['summary']}" if t_str else ev['summary']
-            wrapped = wrap_text(line, ev_f, box_w - 60)
-            for chunk in wrapped:
-                if curr_y + 30 > today_data[3]: break
-                tw = ev_f.getlength(chunk)
-                # FIX: Use curr_y for the background box position instead of hardcoded 75
-                draw.rounded_rectangle([today_data[0]+(box_w-gap)//2 - tw//2 - 10, curr_y - 12, 
-                                      today_data[0]+(box_w-gap)//2 + tw//2 + 10, curr_y + 12], 
-                                      radius=8, fill=(0, 0, 0, 120))
-                draw.text((today_data[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255), anchor="mm")
-                curr_y += 34
+        draw_centered_events(draw, today_data, event_map.get(now.day, []), ev_f, box_w, gap)
 
     title_text = now.strftime("%B").upper()
     tx, ty = get_month_title_position(month_cal, box_w, box_h, GLOBAL_MARGIN, GLOBAL_MARGIN)
