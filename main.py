@@ -8,13 +8,12 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from PIL import Image, ImageDraw, ImageFont
 
-# --- THE PURE NEON PALETTE --- 
+# --- BRAND CONFIG ---
 BRAND_PURPLE_DARK = (10, 2, 20, 255)
 BRAND_PURPLE_LIGHT = (40, 15, 60, 255)
 NEON_PURPLE_GLOW = (180, 50, 255, 255)
 ACCENT_GOLD_GLOW = (255, 215, 0, 255) 
 
-# GitHub Secret Loading
 CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON")
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 MESSAGE_ID = os.getenv("MESSAGE_ID")
@@ -23,10 +22,8 @@ CALENDAR_ID = "9ead18f5408c70117b9a32e804a3b4f1178d95f19abbc240e6220674fdf52ea1@
 calendar.setfirstweekday(calendar.SUNDAY) 
 
 def get_local_now():
-    try:
-        return datetime.datetime.now(zoneinfo.ZoneInfo("America/Los_Angeles"))
-    except Exception:
-        return datetime.datetime.now()
+    try: return datetime.datetime.now(zoneinfo.ZoneInfo("America/Los_Angeles"))
+    except: return datetime.datetime.now()
 
 def get_events(now):
     creds = service_account.Credentials.from_service_account_info(json.loads(CREDS_JSON))
@@ -67,14 +64,15 @@ def draw_heavy_neon_bloom(draw, coords, color, intensity=16):
     draw.rounded_rectangle(coords, radius=15, outline=(255, 255, 255, 255), width=2)
     draw.rounded_rectangle(coords, radius=15, outline=(*color[:3], 255), width=4)
 
-def find_best_title_center(month_cal):
+def get_blank_center(month_cal, box_w, box_h, grid_x, grid_y):
+    """Finds the largest contiguous blank space to center the title."""
     last_row = month_cal[-1]
-    leading_blanks = sum(1 for d in last_row if d == 0)
-    if leading_blanks >= 2: return len(month_cal)-1, 7 - leading_blanks, leading_blanks
-    row0 = month_cal[0]
-    trailing_blanks = sum(1 for d in row0 if d == 0)
-    if trailing_blanks >= 2: return 0, 0, trailing_blanks
-    return -1, -1, 0
+    blanks = [i for i, d in enumerate(last_row) if d == 0]
+    if len(blanks) >= 2:
+        center_x = grid_x + (blanks[0] * box_w) + (len(blanks) * box_w // 2)
+        center_y = grid_y + (len(month_cal)-1) * box_h + (box_h // 2)
+        return center_x, center_y
+    return 960, 1010 # Default bottom center
 
 def create_image(events, now):
     img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE_DARK)
@@ -83,28 +81,28 @@ def create_image(events, now):
     # 1. Background Texture
     midnight_edges = (5, 0, 15, 255)
     max_diag = math.sqrt(960**2 + 540**2)
-    for y in range(1080):
-        for x in range(1920):
-            if y % 4 == 0: # Scanlines
-                dist = math.sqrt((960 - x)**2 + (540 - y)**2)
-                ratio = min(dist / max_diag, 1.0)
-                r = int(BRAND_PURPLE_LIGHT[0] * (1 - ratio) + midnight_edges[0] * ratio)
-                g = int(BRAND_PURPLE_LIGHT[1] * (1 - ratio) + midnight_edges[1] * ratio)
-                b = int(BRAND_PURPLE_LIGHT[2] * (1 - ratio) + midnight_edges[2] * ratio)
-                draw.point((x, y), fill=(r, g, b, 230))
+    for y in range(0, 1080, 2): # Optimization: step 2 for background fill
+        for x in range(0, 1920, 2):
+            dist = math.sqrt((960 - x)**2 + (540 - y)**2)
+            ratio = min(dist / max_diag, 1.0)
+            r = int(BRAND_PURPLE_LIGHT[0] * (1 - ratio) + midnight_edges[0] * ratio)
+            g = int(BRAND_PURPLE_LIGHT[1] * (1 - ratio) + midnight_edges[1] * ratio)
+            b = int(BRAND_PURPLE_LIGHT[2] * (1 - ratio) + midnight_edges[2] * ratio)
+            # Scanline overlay
+            alpha = 230 if y % 4 == 0 else 255
+            draw.rectangle([x, y, x+1, y+1], fill=(r, g, b, alpha))
     
     # 2. Fonts
-    title_f = ImageFont.truetype("ariblk.ttf", 150) # Arial Black
+    title_f = ImageFont.truetype("ariblk.ttf", 150)
     day_f = ImageFont.truetype("arial.ttf", 35)
-    num_f = ImageFont.truetype("arial.ttf", 32) # Fixed: Defined as num_f
+    num_f = ImageFont.truetype("arial.ttf", 32) 
     ev_f = ImageFont.truetype("arial.ttf", 21)
 
     month_cal = calendar.monthcalendar(now.year, now.month)
     grid_x, grid_y = 80, 70 
     box_w, box_h, gap = 245, 195, 18
-    max_txt_w = box_w - 45 
+    max_txt_w = box_w - 40 
 
-    # Headers
     weekdays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
     for i, d in enumerate(weekdays):
         draw.text((grid_x + i*box_w + box_w//2, 35), d, font=day_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
@@ -114,7 +112,7 @@ def create_image(events, now):
         start_str = e['start'].get('dateTime', e['start'].get('date'))
         event_map[int(start_str[8:10])].append(e)
 
-    # 3. Two-Pass Rendering
+    # 3. Two-Pass Rendering for Layering
     today_box = None
     for r, week in enumerate(month_cal):
         for c, day in enumerate(week):
@@ -129,13 +127,14 @@ def create_image(events, now):
             draw.rounded_rectangle(coords, radius=15, fill=(15, 5, 25, 200))
             draw.text((coords[0] + 15, coords[1] + 10), str(day), font=num_f, fill=(255, 255, 255, 180))
 
-            curr_y = coords[1] + 55
+            # Center-Aligned Events
+            curr_y = coords[1] + 65
             for ev in event_map.get(day, []):
                 t_str = format_time(ev['start'].get('dateTime'))
-                line = f"{ev['summary']} | {t_str}" if t_str else ev['summary']
+                line = f"{t_str} | {ev['summary']}" if t_str else ev['summary']
                 for chunk in wrap_text(line, ev_f, max_txt_w):
                     if curr_y + 24 > coords[3]: break
-                    draw.text((coords[2] - 18, curr_y), chunk, font=ev_f, fill=(230, 230, 255), anchor="ra")
+                    draw.text((coords[0] + box_w//2 - gap//2, curr_y), chunk, font=ev_f, fill=(230, 230, 255), anchor="mm")
                     curr_y += 26
 
     if today_box:
@@ -143,23 +142,19 @@ def create_image(events, now):
         draw_heavy_neon_bloom(draw, coords, ACCENT_GOLD_GLOW, intensity=18)
         draw.rounded_rectangle(coords, radius=15, fill=(50, 30, 10, 220))
         draw.text((coords[0] + 15, coords[1] + 10), str(day), font=num_f, fill=(255, 255, 255, 255))
-        curr_y = coords[1] + 55
+        
+        curr_y = coords[1] + 65
         for ev in event_map.get(day, []):
             t_str = format_time(ev['start'].get('dateTime'))
-            line = f"{ev['summary']} | {t_str}" if t_str else ev['summary']
+            line = f"{t_str} | {ev['summary']}" if t_str else ev['summary']
             for chunk in wrap_text(line, ev_f, max_txt_w):
                 if curr_y + 24 > coords[3]: break
-                draw.text((coords[2] - 18, curr_y), chunk, font=ev_f, fill=(255, 255, 255), anchor="ra")
+                draw.text((coords[0] + box_w//2 - gap//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255), anchor="mm")
                 curr_y += 26
 
-    # Floating Title
-    tw_idx, td_start, gap_len = find_best_title_center(month_cal)
-    month_text = now.strftime("%B").upper()
-    if tw_idx != -1:
-        tx, ty = grid_x + (td_start * box_w) + (gap_len * box_w // 2) - (gap // 2), grid_y + (tw_idx * box_h) + (box_h // 2) - (gap // 2)
-        draw.text((tx, ty), month_text, font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
-    else:
-        draw.text((960, 1010), month_text, font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
+    # 4. Smart Title Placement
+    tx, ty = get_blank_center(month_cal, box_w, box_h, grid_x, grid_y)
+    draw.text((tx, ty), now.strftime("%B").upper(), font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
 
     img.convert("RGB").save("out.png")
 
