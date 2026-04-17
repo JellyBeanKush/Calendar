@@ -22,30 +22,26 @@ def get_events():
     return res.get('items', [])
 
 def create_image(events):
+    # Use the bg.png in your repo
     base = Image.open("bg.png").convert("RGBA")
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     draw_ov = ImageDraw.Draw(overlay)
     
-    # Static Fonts
     font_title = ImageFont.truetype("arial.ttf", 95)
     font_days = ImageFont.truetype("arial.ttf", 50)
     font_date_num = ImageFont.truetype("arial.ttf", 45)
-    
-    # Starting point for event font size
     BASE_EVENT_SIZE = 24
 
     now = datetime.datetime.now()
     month_cal = calendar.monthcalendar(now.year, now.month)
     month_name = now.strftime("%B %Y").upper()
 
-    # Draw Title
     draw_ov.text((1920//2, 100), month_name, font=font_title, fill=(255, 182, 193), anchor="mm")
 
-    # Grid Settings
     margin_x, margin_y = 50, 240
     cell_w, cell_h = 265, 160
     padding = 8
-    max_text_width = cell_w - 30 # Padding inside the box
+    max_text_width = cell_w - 30
 
     weekdays = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
     for i, day in enumerate(weekdays):
@@ -80,11 +76,8 @@ def create_image(events):
                     time_str = dt_ev.strftime('%I%p').lower().lstrip('0')
                     full_text = f"• {time_str} - {ev['summary']}"
                     
-                    # --- DYNAMIC FONT SCALING ---
                     current_size = BASE_EVENT_SIZE
                     current_font = ImageFont.truetype("arial.ttf", current_size)
-                    
-                    # Shrink the font until the text fits the box width
                     while current_font.getlength(full_text) > max_text_width and current_size > 12:
                         current_size -= 1
                         current_font = ImageFont.truetype("arial.ttf", current_size)
@@ -96,18 +89,31 @@ def create_image(events):
     combined.convert("RGB").save("out.png")
 
 def post_to_discord():
-    clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID else None
+    clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
+    
+    # Structure for a clean image-only update
+    payload = {
+        "payload_json": json.dumps({
+            "embeds": [{
+                "image": {"url": "attachment://out.png"},
+                "color": 0xFFB6C1
+            }]
+        })
+    }
+    
     with open("out.png", "rb") as f:
-        files = {"file": ("out.png", f)}
-        if clean_id and clean_id.lower() != "none":
+        files = {"files[0]": ("out.png", f)}
+        
+        if clean_id:
             url = f"{WEBHOOK_URL}/messages/{clean_id}"
-            r = requests.patch(url, files=files)
+            r = requests.patch(url, data=payload, files=files)
             if r.status_code == 404:
-                r = requests.post(f"{WEBHOOK_URL}?wait=true", files=files)
-                print(f"NEW MESSAGE ID (UPDATE YOUR SECRETS!): {r.json().get('id')}")
+                print("ID not found, sending fresh post...")
+                r = requests.post(f"{WEBHOOK_URL}?wait=true", data=payload, files=files)
+                print(f"NEW ID: {r.json().get('id')}")
         else:
-            r = requests.post(f"{WEBHOOK_URL}?wait=true", files=files)
-            print(f"NEW MESSAGE ID (UPDATE YOUR SECRETS!): {r.json().get('id')}")
+            r = requests.post(f"{WEBHOOK_URL}?wait=true", data=payload, files=files)
+            print(f"NEW ID: {r.json().get('id')}")
 
 if __name__ == "__main__":
     create_image(get_events())
