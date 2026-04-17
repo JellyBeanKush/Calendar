@@ -13,10 +13,9 @@ BRAND_PURPLE_DARK = (10, 2, 20, 255)
 BRAND_PURPLE_LIGHT = (40, 15, 60, 255)
 NEON_PURPLE_GLOW = (180, 50, 255, 255)
 ACCENT_GOLD_GLOW = (218, 165, 32, 255) 
-GREYED_OUT_COLOR = (40, 40, 60, 150)
 
-# UPDATED: Target path for Mix It Up
-SAVE_PATH = r"F:\MIX IT UP MEDIA\Videos and Images\calendar\out.png"
+# Saving locally to the repo root so GitHub Actions can find and push it
+SAVE_PATH = "out.png"
 
 CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON")
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
@@ -190,13 +189,13 @@ def create_image(events, now):
     tx, ty = get_month_title_position(month_cal, box_w, box_h, GLOBAL_MARGIN, GLOBAL_MARGIN)
     draw.text((tx, ty), title_text, font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
 
-    # Final Save to F: Drive
     img.convert("RGB").save(SAVE_PATH)
 
 def post_to_discord():
     if not WEBHOOK_URL: return
-    
     clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
+    
+    # Delete old message to avoid Discord's caching/rendering bugs
     if clean_id:
         try:
             requests.delete(f"{WEBHOOK_URL}/messages/{clean_id}")
@@ -207,14 +206,10 @@ def post_to_discord():
     with open(SAVE_PATH, "rb") as f:
         files = {"file": ("calendar.png", f, "image/png")}
         res = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
-        
         if res.status_code in [200, 201, 204]:
-            new_id = res.json().get('id')
-            print(f"NEW MESSAGE ID: {new_id}")
+            print(f"NEW MESSAGE ID: {res.json().get('id')}")
 
 if __name__ == "__main__":
-    # Ensure directory exists before saving
-    os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
     t = get_local_now()
     create_image(get_events(t), t)
     post_to_discord()
