@@ -18,7 +18,7 @@ except Exception as e:
     exit(1)
 
 # Your Google Calendar ID (from Calendar Settings)
-CALENDAR_ID = "YOUR_CALENDAR_ID_HERE" 
+CALENDAR_ID = "9ead18f5408c70117b9a32e804a3b4f1178d95f19abbc240e6220674fdf52ea1@group.calendar.google.com" 
 
 def get_events():
     print("Connecting to Google Calendar API...")
