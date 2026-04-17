@@ -1,0 +1,30 @@
+name: Update Stream Calendar
+
+on:
+  schedule:
+    - cron: '0 12 * * *' # Runs every day at 12:00 UTC (Adjust as needed)
+  workflow_dispatch: # Allows you to run it manually with one click
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: |
+          pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib Pillow requests
+
+      - name: Run Update Script
+        env:
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # After the first run, add the MESSAGE_ID here as a secret too!
+          MESSAGE_ID: ${{ secrets.MESSAGE_ID }}
+        run: python main.py
