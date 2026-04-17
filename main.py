@@ -12,7 +12,6 @@ from PIL import Image, ImageDraw, ImageFont
 BRAND_PURPLE_DARK = (10, 2, 20, 255)
 BRAND_PURPLE_LIGHT = (40, 15, 60, 255)
 NEON_PURPLE_GLOW = (180, 50, 255, 255)
-# Warm Goldenrod yellow
 ACCENT_GOLD_GLOW = (218, 165, 32, 255) 
 GREYED_OUT_COLOR = (40, 40, 60, 150)
 
@@ -78,7 +77,6 @@ def get_month_title_position(month_cal, box_w, box_h, margin_x, margin_y):
     return (x_start + x_end) // 2, (y_start + y_end) // 2
 
 def draw_centered_events(draw, coords, events, font_path, box_w, gap, is_grey=False):
-    # Dynamic text shrinking logic
     base_font_size = 25
     all_lines = []
     for ev in events:
@@ -97,7 +95,7 @@ def draw_centered_events(draw, coords, events, font_path, box_w, gap, is_grey=Fa
         return wrapped, lh
 
     chunks, lh = get_layout(current_size)
-    available_h = (coords[3] - coords[1]) - 75 # Padding for date number
+    available_h = (coords[3] - coords[1]) - 75 
     
     while len(chunks) * lh > available_h and current_size > 12:
         current_size -= 1
@@ -114,11 +112,9 @@ def draw_centered_events(draw, coords, events, font_path, box_w, gap, is_grey=Fa
         tw = final_font.getlength(chunk)
         bg_alpha = 60 if is_grey else 100
         text_alpha = 100 if is_grey else 255
-        
         draw.rounded_rectangle([coords[0]+(box_w-gap)//2 - tw//2 - 8, curr_y - (lh//2) + 2, 
                                 coords[0]+(box_w-gap)//2 + tw//2 + 8, curr_y + (lh//2) - 2], 
                                 radius=6, fill=(0, 0, 0, bg_alpha))
-        
         draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=final_font, fill=(255, 255, 255, text_alpha), anchor="mm")
         curr_y += lh
 
@@ -126,7 +122,6 @@ def create_image(events, now):
     img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE_DARK)
     draw = ImageDraw.Draw(img)
     
-    # Background Scanlines
     midnight_edges = (5, 0, 15, 255)
     max_diag = math.sqrt(960**2 + 540**2)
     for y in range(0, 1080, 4):
@@ -171,16 +166,12 @@ def create_image(events, now):
                 today_data = coords
                 continue
 
-            # Off-day or No Stream day logic
             if is_no_stream or (is_weekend and not has_events):
                 draw.rounded_rectangle(coords, radius=15, outline=(100, 100, 120, 50), width=2, fill=(20, 20, 30, 150))
                 draw.text((coords[0] + 18, coords[1] + 18), str(day), font=num_f, fill=(255, 255, 255, 60))
-                
-                # FIXED: Always draw all events, even on greyed out days
                 if has_events:
                     draw_centered_events(draw, coords, day_events, font_path, box_w, gap, is_grey=True)
             else:
-                # Active Stream day logic
                 draw_heavy_neon_bloom(draw, coords, NEON_PURPLE_GLOW, intensity=10)
                 draw.rounded_rectangle(coords, radius=15, fill=(15, 5, 25, 200))
                 draw.text((coords[0] + 18, coords[1] + 18), str(day), font=num_f, fill=(255, 255, 255, 130))
@@ -200,12 +191,25 @@ def create_image(events, now):
 
 def post_to_discord():
     if not WEBHOOK_URL: return
-    payload = {"embeds": [{"image": {"url": "attachment://calendar.png"}, "color": 16761095}]}
+    
+    # Try to delete the old message first to prevent "Double Image" glitch
     clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
+    if clean_id:
+        try:
+            requests.delete(f"{WEBHOOK_URL}/messages/{clean_id}")
+        except:
+            pass # Skip if delete fails (e.g. message already gone)
+
+    payload = {"embeds": [{"image": {"url": "attachment://calendar.png"}, "color": 16761095}]}
     with open("out.png", "rb") as f:
         files = {"file": ("calendar.png", f, "image/png")}
-        if clean_id: requests.patch(f"{WEBHOOK_URL}/messages/{clean_id}", data={"payload_json": json.dumps(payload)}, files=files)
-        else: requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
+        # Post fresh message
+        res = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
+        
+        # LOG THIS ID: You should update your GitHub secret with the new ID printed here!
+        if res.status_code in [200, 201, 204]:
+            new_id = res.json().get('id')
+            print(f"NEW MESSAGE ID: {new_id}")
 
 if __name__ == "__main__":
     t = get_local_now()
