@@ -1,148 +1,136 @@
-import os, json, datetime, requests, calendar, time
+import os, json, datetime, requests, calendar
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-# --- CONFIG ---
-CALENDAR_ID = "9ead18f5408c70117b9a32e804a3b4f1178d95f19abbc240e6220674fdf52ea1@group.calendar.google.com"
-
-# Brand Colors (HoneyBear Squish)
-BRAND_PURPLE = (25, 10, 45)       # Deep base purple
-ACCENT_GOLD = (255, 215, 0)      # Golden Yellow accent
-BOX_BG = (15, 5, 30, 255)         # Fully opaque dark boxes
-HIGHLIGHT_PURPLE = (60, 20, 100, 255) # Today's highlight
+# --- BRAND CONFIG ---
+# HoneyBear Squish Colors
+BRAND_PURPLE = (20, 5, 40)
+NEON_PURPLE = (160, 32, 240)
+ACCENT_GOLD = (255, 215, 0)
+CYAN_GLOW = (0, 255, 255) # Added as a secondary neon highlight
 
 # GitHub Secrets
 CREDS_JSON = json.loads(os.getenv("GOOGLE_CREDS_JSON"))
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 MESSAGE_ID = os.getenv("MESSAGE_ID")
+CALENDAR_ID = "9ead18f5408c70117b9a32e804a3b4f1178d95f19abbc240e6220674fdf52ea1@group.calendar.google.com"
 
 def get_events():
     creds = service_account.Credentials.from_service_account_info(CREDS_JSON)
     service = build('calendar', 'v3', credentials=creds)
     now = datetime.datetime.utcnow()
-    start_month = now.replace(day=1, hour=0, minute=0, second=0).isoformat() + 'Z'
+    start = now.replace(day=1, hour=0, minute=0, second=0).isoformat() + 'Z'
     _, last_day = calendar.monthrange(now.year, now.month)
-    end_month = now.replace(day=last_day, hour=23, minute=59, second=59).isoformat() + 'Z'
-    res = service.events().list(calendarId=CALENDAR_ID, timeMin=start_month, timeMax=end_month, singleEvents=True, orderBy='startTime').execute()
+    end = now.replace(day=last_day, hour=23, minute=59, second=59).isoformat() + 'Z'
+    res = service.events().list(calendarId=CALENDAR_ID, timeMin=start, timeMax=end, singleEvents=True, orderBy='startTime').execute()
     return res.get('items', [])
 
-def get_font(name, size):
-    try:
-        return ImageFont.truetype(name, size)
-    except:
-        return ImageFont.load_default()
+def draw_neon_rect(draw, coords, color, intensity=5):
+    """Draws a rounded rectangle with a neon bloom effect."""
+    for i in range(intensity, 0, -1):
+        alpha = int(255 * (1 / (i * 2)))
+        glow_color = (*color, alpha)
+        draw.rounded_rectangle(
+            [coords[0]-i, coords[1]-i, coords[2]+i, coords[3]+i],
+            radius=15, outline=glow_color, width=i
+        )
+    draw.rounded_rectangle(coords, radius=15, outline=(*color, 255), width=2)
 
 def create_image(events):
-    # 1. Create Procedural Background (1920x1080)
-    base = Image.new("RGBA", (1920, 1080), BRAND_PURPLE)
-    draw = ImageDraw.Draw(base)
+    # 1. Base Canvas & Neon Grid Background
+    img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE)
+    draw = ImageDraw.Draw(img)
     
-    # Add a subtle "Month-Themed" pattern (Geometric Borders)
-    # This creates a golden yellow inner frame that changes slightly based on the month
-    border_thickness = 15
-    draw.rectangle([20, 20, 1900, 1060], outline=ACCENT_GOLD, width=border_thickness)
+    # Draw a subtle "Scanline" / Hex pattern effect
+    for y in range(0, 1080, 40):
+        draw.line([(0, y), (1920, y)], fill=(255, 255, 255, 5), width=1)
 
     # 2. Setup Fonts
-    font_title = get_font("arial.ttf", 90)
-    font_days = get_font("arial.ttf", 50)
-    font_date_num = get_font("arial.ttf", 45)
-    BASE_EVENT_SIZE = 24
+    font_path = "arial.ttf"
+    title_font = ImageFont.truetype(font_path, 110)
+    day_font = ImageFont.truetype(font_path, 50)
+    num_font = ImageFont.truetype(font_path, 42)
+    ev_size = 22
 
     now = datetime.datetime.now()
-    month_name = now.strftime("%B %Y").upper()
+    month_label = now.strftime("%B %Y").upper()
 
-    # 3. Dedicated Month Title Box
-    # Separated into its own high-visibility box at the top
-    title_box_y = 60
-    title_box_h = 150
-    draw.rectangle([100, title_box_y, 1820, title_box_y + title_box_h], fill=(0, 0, 0, 180), outline=ACCENT_GOLD, width=5)
-    draw.text((1920//2, title_box_y + (title_box_h // 2)), month_name, font=font_title, fill=ACCENT_GOLD, anchor="mm")
+    # 3. Separated Neon Title Box
+    # Centered at the top with a Golden Yellow glow
+    t_box = [400, 50, 1520, 200]
+    draw_neon_rect(draw, t_box, ACCENT_GOLD)
+    draw.text((1920//2, 125), month_label, font=title_font, fill=ACCENT_GOLD, anchor="mm")
 
-    # 4. Grid Layout
-    margin_x, margin_y = 50, 320
-    cell_w, cell_h = 260, 140
-    padding = 10
-    max_text_width = cell_w - 30
+    # 4. Grid Config
+    margin_x, margin_y = 70, 340
+    col_w, row_h = 250, 140
+    pad = 15
 
-    # Weekday Labels
+    # Neon Weekday Labels
     weekdays = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
-    for i, day_name in enumerate(weekdays):
-        draw.text((margin_x + i*cell_w + cell_w//2, margin_y - 60), day_name, font=font_days, fill=ACCENT_GOLD, anchor="mm")
+    for i, day in enumerate(weekdays):
+        draw.text((margin_x + i*col_w + col_w//2, margin_y - 60), day, font=day_font, fill=ACCENT_GOLD, anchor="mm")
 
     # Map Events
     event_map = {}
     for e in events:
-        start = e['start'].get('dateTime', e['start'].get('date'))
-        dt = datetime.datetime.fromisoformat(start.replace('Z', '+00:00'))
+        start_str = e['start'].get('dateTime', e['start'].get('date'))
+        dt = datetime.datetime.fromisoformat(start_str.replace('Z', '+00:00'))
         event_map.setdefault(dt.day, []).append(e)
 
-    # 5. Build Calendar Grid
+    # 5. Drawing Day Cells
     month_cal = calendar.monthcalendar(now.year, now.month)
     for r, week in enumerate(month_cal):
         for c, day in enumerate(week):
             if day == 0: continue
             
-            x1, y1 = margin_x + c * cell_w, margin_y + r * cell_h
-            x2, y2 = x1 + cell_w - padding, y1 + cell_h - padding
+            x1, y1 = margin_x + c * col_w, margin_y + r * row_h
+            x2, y2 = x1 + col_w - pad, y1 + row_h - pad
             
-            # Day Box - Now highly opaque
-            current_box_color = BOX_BG
-            current_border = (255, 255, 255, 60)
+            # Box Style - Fully Opaque base
+            # Purple borders for general days, Golden for "Today"
+            box_fill = (10, 5, 25, 255)
+            glow_color = NEON_PURPLE
             
             if day == now.day:
-                current_box_color = HIGHLIGHT_PURPLE
-                current_border = ACCENT_GOLD
+                box_fill = (30, 15, 50, 255)
+                glow_color = ACCENT_GOLD
 
-            draw.rectangle([x1, y1, x2, y2], fill=current_box_color, outline=current_border, width=3)
+            draw.rounded_rectangle([x1, y1, x2, y2], radius=12, fill=box_fill)
+            draw_neon_rect(draw, [x1, y1, x2, y2], glow_color, intensity=4)
             
             # Date Number
-            draw.text((x1 + 15, y1 + 10), str(day), font=font_date_num, fill=(255, 255, 255, 230))
+            draw.text((x1 + 15, y1 + 10), str(day), font=num_font, fill=(255, 255, 255, 220))
 
-            # Events
+            # Events (Time - Name)
             if day in event_map:
-                ev_y = y1 + 65
+                curr_y = y1 + 65
                 for ev in event_map[day][:3]:
-                    start_iso = ev['start'].get('dateTime', ev['start'].get('date'))
-                    dt_ev = datetime.datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
-                    time_str = dt_ev.strftime('%I%p').lower().lstrip('0')
-                    full_text = f"• {time_str} - {ev['summary']}"
+                    s_iso = ev['start'].get('dateTime', ev['start'].get('date'))
+                    ev_dt = datetime.datetime.fromisoformat(s_iso.replace('Z', '+00:00'))
+                    t_str = ev_dt.strftime('%I%p').lower().lstrip('0')
+                    full_txt = f"• {t_str} - {ev['summary']}"
                     
-                    # Shrink font if text is too long
-                    current_size = BASE_EVENT_SIZE
-                    current_font = get_font("arial.ttf", current_size)
-                    while current_font.getlength(full_text) > max_text_width and current_size > 12:
-                        current_size -= 1
-                        current_font = get_font("arial.ttf", current_size)
+                    # Scaling
+                    f_ev = ImageFont.truetype(font_path, ev_size)
+                    while f_ev.getlength(full_txt) > (col_w - 40) and f_ev.size > 12:
+                        f_ev = ImageFont.truetype(font_path, f_ev.size - 1)
                     
-                    draw.text((x1 + 15, ev_y), full_text, font=current_font, fill="white")
-                    ev_y += 28
+                    draw.text((x1 + 15, curr_y), full_txt, font=f_ev, fill=(255, 255, 255))
+                    curr_y += 24
 
-    base.convert("RGB").save("out.png")
+    img.convert("RGB").save("out.png")
 
 def post_to_discord():
     clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
-    payload = {
-        "embeds": [{
-            "image": {"url": "attachment://calendar.png"},
-            "color": 16761095 # Golden Yellow
-        }]
-    }
-
+    payload = {"embeds": [{"image": {"url": "attachment://calendar.png"}, "color": 16761095}]}
     with open("out.png", "rb") as f:
         files = {"file": ("calendar.png", f, "image/png")}
-        
         if clean_id:
-            url = f"{WEBHOOK_URL}/messages/{clean_id}"
-            r = requests.patch(url, data={"payload_json": json.dumps(payload)}, files=files)
-            if r.status_code >= 400:
-                f.seek(0)
-                r = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
-                print(f"NEW MESSAGE ID: {r.json().get('id')}")
+            requests.patch(f"{WEBHOOK_URL}/messages/{clean_id}", data={"payload_json": json.dumps(payload)}, files=files)
         else:
-            r = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
-            if r.status_code < 300:
-                print(f"NEW MESSAGE ID: {r.json().get('id')}")
+            requests.post(f"{WEBHOOK_URL}", data={"payload_json": json.dumps(payload)}, files=files)
 
 if __name__ == "__main__":
     create_image(get_events())
