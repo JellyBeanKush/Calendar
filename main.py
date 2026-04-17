@@ -65,94 +65,94 @@ def draw_heavy_neon_bloom(draw, coords, color, intensity=16):
     draw.rounded_rectangle(coords, radius=15, outline=(*color[:3], 255), width=4)
 
 def get_month_title_position(month_cal, box_w, box_h, margin_x, margin_y):
-    """Finds the best blank space (top or bottom) and centers the title there."""
-    # Check top row (row 0)
     top_blanks = [i for i, day in enumerate(month_cal[0]) if day == 0]
-    # Check bottom row (last row)
     bot_blanks = [i for i, day in enumerate(month_cal[-1]) if day == 0]
     
-    # Logic: Center in the row with more blank space
-    if len(top_blanks) >= len(bot_blanks):
-        target_row = 0
-        blanks = top_blanks
+    if len(top_blanks) >= len(bot_blanks) and len(top_blanks) > 0:
+        x_start, x_end = margin_x + (top_blanks[0] * box_w), margin_x + (top_blanks[-1] * box_w) + box_w
+        y_start, y_end = margin_y, margin_y + box_h
     else:
-        target_row = len(month_cal) - 1
-        blanks = bot_blanks
+        x_start, x_end = margin_x + (bot_blanks[0] * box_w), margin_x + (bot_blanks[-1] * box_w) + box_w
+        y_start, y_end = margin_y + (len(month_cal)-1) * box_h, margin_y + (len(month_cal)-1) * box_h + box_h
 
-    # Calculate center based on the horizontal span of blank boxes
-    start_x = margin_x + (blanks[0] * box_w)
-    end_x = margin_x + (blanks[-1] * box_w) + box_w
-    center_x = (start_x + end_x) // 2
-    center_y = margin_y + (target_row * box_h) + (box_h // 2)
-    
-    return center_x, center_y
+    return (x_start + x_end) // 2, (y_start + y_end) // 2
 
 def create_image(events, now):
     img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE_DARK)
     draw = ImageDraw.Draw(img)
     
-    # 1. Background Texture
+    # Background logic
     midnight_edges = (5, 0, 15, 255)
     max_diag = math.sqrt(960**2 + 540**2)
-    for y in range(1080):
+    for y in range(0, 1080, 4):
         dy = (540 - y)**2
         for x in range(1920):
-            if y % 4 == 0:
-                dist = math.sqrt((960 - x)**2 + dy)
-                ratio = min(dist / max_diag, 1.0)
-                r = int(BRAND_PURPLE_LIGHT[0] * (1 - ratio) + midnight_edges[0] * ratio)
-                g = int(BRAND_PURPLE_LIGHT[1] * (1 - ratio) + midnight_edges[1] * ratio)
-                b = int(BRAND_PURPLE_LIGHT[2] * (1 - ratio) + midnight_edges[2] * ratio)
-                draw.point((x, y), fill=(r, g, b, 230))
+            dist = math.sqrt((960 - x)**2 + dy)
+            ratio = min(dist / max_diag, 1.0)
+            r = int(BRAND_PURPLE_LIGHT[0] * (1 - ratio) + midnight_edges[0] * ratio)
+            g = int(BRAND_PURPLE_LIGHT[1] * (1 - ratio) + midnight_edges[1] * ratio)
+            b = int(BRAND_PURPLE_LIGHT[2] * (1 - ratio) + midnight_edges[2] * ratio)
+            draw.point((x, y), fill=(r, g, b, 230))
     
-    # 2. SYMMETRY ENGINE
-    GLOBAL_MARGIN = 100 
+    # 2. MAXIMIZED GRID
+    GLOBAL_MARGIN = 25 
     box_w = (1920 - (2 * GLOBAL_MARGIN)) // 7
     month_cal = calendar.monthcalendar(now.year, now.month)
     num_rows = len(month_cal)
     box_h = (1080 - (2 * GLOBAL_MARGIN)) // num_rows
-    gap = 18
+    gap = 12 
 
-    # 3. Fonts
-    title_f = ImageFont.truetype("ariblk.ttf", 160) 
-    num_f = ImageFont.truetype("arial.ttf", 36) 
-    ev_f = ImageFont.truetype("arial.ttf", 24)
+    title_f = ImageFont.truetype("ariblk.ttf", 185) 
+    num_f = ImageFont.truetype("arial.ttf", 42) 
+    ev_f = ImageFont.truetype("arial.ttf", 26)
 
     event_map = {d: [] for d in range(1, 32)}
     for e in events:
         start_str = e['start'].get('dateTime', e['start'].get('date'))
         event_map[int(start_str[8:10])].append(e)
 
-    # 4. Render Grid
+    # 3. RENDER ALL NON-TODAY BOXES FIRST
+    # This ensures the today-highlight is on the top-most layer later.
+    today_data = None
     for r, week in enumerate(month_cal):
         for c, day in enumerate(week):
             if day == 0: continue
-            coords = [
-                GLOBAL_MARGIN + c * box_w, 
-                GLOBAL_MARGIN + r * box_h, 
-                GLOBAL_MARGIN + c * box_w + box_w - gap, 
-                GLOBAL_MARGIN + r * box_h + box_h - gap
-            ]
+            coords = [GLOBAL_MARGIN + c * box_w, GLOBAL_MARGIN + r * box_h, 
+                      GLOBAL_MARGIN + c * box_w + box_w - gap, GLOBAL_MARGIN + r * box_h + box_h - gap]
             
-            is_today = (day == now.day)
-            color = ACCENT_GOLD_GLOW if is_today else NEON_PURPLE_GLOW
-            bg_fill = (50, 30, 10, 220) if is_today else (15, 5, 25, 200)
-            
-            draw_heavy_neon_bloom(draw, coords, color, intensity=18 if is_today else 10)
-            draw.rounded_rectangle(coords, radius=15, fill=bg_fill)
-            draw.text((coords[0] + 20, coords[1] + 15), str(day), font=num_f, fill=(255, 255, 255, 255 if is_today else 180))
+            if day == now.day:
+                today_data = coords
+                continue # Skip for final layer
 
-            curr_y = coords[1] + 75
+            draw_heavy_neon_bloom(draw, coords, NEON_PURPLE_GLOW, intensity=10)
+            draw.rounded_rectangle(coords, radius=15, fill=(15, 5, 25, 200))
+            draw.text((coords[0] + 25, coords[1] + 20), str(day), font=num_f, fill=(255, 255, 255, 180))
+
+            curr_y = coords[1] + 85
             for ev in event_map.get(day, []):
                 t_str = format_time(ev['start'].get('dateTime'))
                 line = f"{t_str} | {ev['summary']}" if t_str else ev['summary']
-                for chunk in wrap_text(line, ev_f, box_w - 50):
-                    if curr_y + 26 > coords[3]: break
+                for chunk in wrap_text(line, ev_f, box_w - 60):
+                    if curr_y + 30 > coords[3]: break
                     draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255), anchor="mm")
-                    curr_y += 32
+                    curr_y += 36
 
-    # 5. CORRECTED MONTH TITLE POSITIONING
-    # Removed year, centered in the row (top or bottom) with more empty space.
+    # 4. RENDER TODAY ON TOP LAYER
+    if today_data:
+        draw_heavy_neon_bloom(draw, today_data, ACCENT_GOLD_GLOW, intensity=22)
+        draw.rounded_rectangle(today_data, radius=15, fill=(50, 30, 10, 230))
+        draw.text((today_data[0] + 25, today_data[1] + 20), str(now.day), font=num_f, fill=(255, 255, 255, 255))
+        
+        curr_y = today_data[1] + 85
+        for ev in event_map.get(now.day, []):
+            t_str = format_time(ev['start'].get('dateTime'))
+            line = f"{t_str} | {ev['summary']}" if t_str else ev['summary']
+            for chunk in wrap_text(line, ev_f, box_w - 60):
+                if curr_y + 30 > today_data[3]: break
+                draw.text((today_data[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255), anchor="mm")
+                curr_y += 36
+
+    # 5. RENDER MONTH TITLE
     title_text = now.strftime("%B").upper()
     tx, ty = get_month_title_position(month_cal, box_w, box_h, GLOBAL_MARGIN, GLOBAL_MARGIN)
     draw.text((tx, ty), title_text, font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
