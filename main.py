@@ -8,13 +8,13 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from PIL import Image, ImageDraw, ImageFont
 
-# --- THE PURE NEON PALETTE --- 
+# --- BRAND CONFIG ---
 BRAND_PURPLE_DARK = (10, 2, 20, 255)
 BRAND_PURPLE_LIGHT = (40, 15, 60, 255)
 NEON_PURPLE_GLOW = (180, 50, 255, 255)
 ACCENT_GOLD_GLOW = (255, 215, 0, 255) 
+GREYED_OUT_COLOR = (40, 40, 60, 150)
 
-# GitHub Secret Loading
 CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON")
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 MESSAGE_ID = os.getenv("MESSAGE_ID")
@@ -23,10 +23,8 @@ CALENDAR_ID = "9ead18f5408c70117b9a32e804a3b4f1178d95f19abbc240e6220674fdf52ea1@
 calendar.setfirstweekday(calendar.SUNDAY) 
 
 def get_local_now():
-    try:
-        return datetime.datetime.now(zoneinfo.ZoneInfo("America/Los_Angeles"))
-    except Exception:
-        return datetime.datetime.now()
+    try: return datetime.datetime.now(zoneinfo.ZoneInfo("America/Los_Angeles"))
+    except: return datetime.datetime.now()
 
 def get_events(now):
     creds = service_account.Credentials.from_service_account_info(json.loads(CREDS_JSON))
@@ -45,7 +43,6 @@ def format_time(time_str):
     return dt_local.strftime("%I%p").lstrip('0').lower()
 
 def wrap_text(text, font, max_width):
-    """Wraps text within a specific pixel width to prevent clipping."""
     lines = []
     words = text.split()
     while words:
@@ -68,119 +65,126 @@ def draw_heavy_neon_bloom(draw, coords, color, intensity=16):
     draw.rounded_rectangle(coords, radius=15, outline=(255, 255, 255, 255), width=2)
     draw.rounded_rectangle(coords, radius=15, outline=(*color[:3], 255), width=4)
 
-def find_best_title_center(month_cal):
-    """Dynamically finds the best position for the title 'hole' in the grid."""
-    last_row = month_cal[-1]
-    leading_blanks = sum(1 for d in last_row if d == 0)
-    if leading_blanks >= 2: return len(month_cal)-1, 7 - leading_blanks, leading_blanks
-    row0 = month_cal[0]
-    trailing_blanks = sum(1 for d in row0 if d == 0)
-    if trailing_blanks >= 2: return 0, 0, trailing_blanks
-    return -1, -1, 0
+def get_month_title_position(month_cal, box_w, box_h, margin_x, margin_y):
+    top_blanks = [i for i, day in enumerate(month_cal[0]) if day == 0]
+    bot_blanks = [i for i, day in enumerate(month_cal[-1]) if day == 0]
+    if len(top_blanks) >= len(bot_blanks) and len(top_blanks) > 0:
+        x_start, x_end = margin_x + (top_blanks[0] * box_w), margin_x + (top_blanks[-1] * box_w) + box_w
+        y_start, y_end = margin_y, margin_y + box_h
+    else:
+        x_start, x_end = margin_x + (bot_blanks[0] * box_w), margin_x + (bot_blanks[-1] * box_w) + box_w
+        y_start, y_end = margin_y + (len(month_cal)-1) * box_h, margin_y + (len(month_cal)-1) * box_h + box_h
+    return (x_start + x_end) // 2, (y_start + y_end) // 2
 
 def create_image(events, now):
     img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE_DARK)
     draw = ImageDraw.Draw(img)
     
-    # Background texture preservation
+    # Background Scanlines
     midnight_edges = (5, 0, 15, 255)
     max_diag = math.sqrt(960**2 + 540**2)
-    for y in range(1080):
+    for y in range(0, 1080, 4):
+        dy = (540 - y)**2
         for x in range(1920):
-            if y % 4 == 0:
-                dist = math.sqrt((960 - x)**2 + (540 - y)**2)
-                ratio = min(dist / max_diag, 1.0)
-                r = int(BRAND_PURPLE_LIGHT[0] * (1 - ratio) + midnight_edges[0] * ratio)
-                g = int(BRAND_PURPLE_LIGHT[1] * (1 - ratio) + midnight_edges[1] * ratio)
-                b = int(BRAND_PURPLE_LIGHT[2] * (1 - ratio) + midnight_edges[2] * ratio)
-                draw.point((x, y), fill=(r, g, b, 230))
+            dist = math.sqrt((960 - x)**2 + dy)
+            ratio = min(dist / max_diag, 1.0)
+            r = int(BRAND_PURPLE_LIGHT[0] * (1 - ratio) + midnight_edges[0] * ratio)
+            g = int(BRAND_PURPLE_LIGHT[1] * (1 - ratio) + midnight_edges[1] * ratio)
+            b = int(BRAND_PURPLE_LIGHT[2] * (1 - ratio) + midnight_edges[2] * ratio)
+            draw.point((x, y), fill=(r, g, b, 230))
     
-    # Fonts: Arial Black and regular Arial are preserved, sizes are updated.
-    title_f = ImageFont.truetype("ariblk.ttf", 150) # The specific font preserved
-    day_f = ImageFont.truetype("arial.ttf", 35)
-    # Fix 2: Defined smaller font size for numbers.
-    num_f = ImageFont.truetype("arial.ttf", 32) 
-    ev_f = ImageFont.truetype("arial.ttf", 21)
-
+    GLOBAL_MARGIN = 25 
+    box_w = (1920 - (2 * GLOBAL_MARGIN)) // 7
     month_cal = calendar.monthcalendar(now.year, now.month)
-    grid_x, grid_y = 80, 70 
-    box_w, box_h, gap = 245, 195, 18
-    # Definable margin inside the box for wrapping
-    max_txt_w = box_w - 45 
+    num_rows = len(month_cal)
+    box_h = (1080 - (2 * GLOBAL_MARGIN)) // num_rows
+    gap = 12 
 
-    # Weekday Headers: Preserved
-    weekdays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
-    for i, d in enumerate(weekdays):
-        draw.text((grid_x + i*box_w + box_w//2, 35), d, font=day_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
+    title_f = ImageFont.truetype("ariblk.ttf", 185) 
+    num_f = ImageFont.truetype("arial.ttf", 34) 
+    ev_f = ImageFont.truetype("arial.ttf", 25)
 
     event_map = {d: [] for d in range(1, 32)}
     for e in events:
         start_str = e['start'].get('dateTime', e['start'].get('date'))
         event_map[int(start_str[8:10])].append(e)
 
-    # Main Grid Rendering
-    today_box = None
+    today_data = None
     for r, week in enumerate(month_cal):
         for c, day in enumerate(week):
             if day == 0: continue
-            coords = [grid_x + c * box_w, grid_y + r * box_h, grid_x + c * box_w + box_w - gap, grid_y + r * box_h + box_h - gap]
+            coords = [GLOBAL_MARGIN + c * box_w, GLOBAL_MARGIN + r * box_h, 
+                      GLOBAL_MARGIN + c * box_w + box_w - gap, GLOBAL_MARGIN + r * box_h + box_h - gap]
             
-            # Preserve priority layer for 'Today'
             if day == now.day:
-                today_box = (coords, day)
+                today_data = coords
                 continue
-            
-            draw_heavy_neon_bloom(draw, coords, NEON_PURPLE_GLOW, intensity=10)
-            draw.rounded_rectangle(coords, radius=15, fill=(15, 5, 25, 200))
-            # Fix 2: Day number size smaller, and moved to preserve space.
-            draw.text((coords[0] + 15, coords[1] + 10), str(day), font=num_f, fill=(255, 255, 255, 180))
 
-            # Fix 1: Event text wrapping and clipping control.
-            curr_y = coords[1] + 55
-            for ev in event_map.get(day, []):
-                t_str = format_time(ev['start'].get('dateTime'))
-                line = f"{ev['summary']} | {t_str}" if t_str else ev['summary']
+            day_events = event_map.get(day, [])
+            is_no_stream = any("NO STREAM" in ev.get('summary', '').upper() for ev in day_events)
+            is_weekend = (c == 0 or c == 6)
+            has_events = len(day_events) > 0
+
+            if is_no_stream or (is_weekend and not has_events):
+                draw.rounded_rectangle(coords, radius=15, outline=(100, 100, 120, 50), width=2, fill=(20, 20, 30, 150))
+                draw.text((coords[0] + 15, coords[1] + 15), str(day), font=num_f, fill=(255, 255, 255, 60))
                 
-                # Apply text wrapping.
-                for chunk in wrap_text(line, ev_f, max_txt_w):
-                    # Height constraint check: Stop rendering if it exits the box.
-                    if curr_y + 24 > coords[3]: break
-                    draw.text((coords[0] + 18, curr_y), chunk, font=ev_f, fill=(230, 230, 255))
-                    curr_y += 26
+                if is_no_stream:
+                    curr_y = coords[1] + 75
+                    for ev in day_events:
+                        if "NO STREAM" in ev.get('summary', '').upper():
+                            chunk = ev['summary'].upper()
+                            tw = ev_f.getlength(chunk)
+                            draw.rounded_rectangle([coords[0]+(box_w-gap)//2 - tw//2 - 10, curr_y - 12, 
+                                                  coords[0]+(box_w-gap)//2 + tw//2 + 10, curr_y + 12], 
+                                                  radius=8, fill=(0, 0, 0, 60))
+                            draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255, 100), anchor="mm")
+            else:
+                draw_heavy_neon_bloom(draw, coords, NEON_PURPLE_GLOW, intensity=10)
+                draw.rounded_rectangle(coords, radius=15, fill=(15, 5, 25, 200))
+                draw.text((coords[0] + 15, coords[1] + 15), str(day), font=num_f, fill=(255, 255, 255, 130))
 
-    # Preserve 'Today' styling layer
-    if today_box:
-        coords, day = today_box
-        draw_heavy_neon_bloom(draw, coords, ACCENT_GOLD_GLOW, intensity=18)
-        draw.rounded_rectangle(coords, radius=15, fill=(50, 30, 10, 220))
-        # Fix 2: Today's number is also smaller and relocated.
-        draw.text((coords[0] + 15, coords[1] + 10), str(day), font=num_f, fill=(255, 255, 255, 255))
+                curr_y = coords[1] + 75
+                for ev in day_events:
+                    t_str = format_time(ev['start'].get('dateTime'))
+                    line = f"{t_str} | {ev['summary']}" if t_str else ev['summary']
+                    wrapped = wrap_text(line, ev_f, box_w - 60)
+                    for chunk in wrapped:
+                        if curr_y + 30 > coords[3]: break
+                        tw = ev_f.getlength(chunk)
+                        draw.rounded_rectangle([coords[0]+(box_w-gap)//2 - tw//2 - 10, curr_y - 12, 
+                                              coords[0]+(box_w-gap)//2 + tw//2 + 10, curr_y + 12], 
+                                              radius=8, fill=(0, 0, 0, 100))
+                        draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255), anchor="mm")
+                        curr_y += 34
+
+    if today_data:
+        draw_heavy_neon_bloom(draw, today_data, ACCENT_GOLD_GLOW, intensity=22)
+        draw.rounded_rectangle(today_data, radius=15, fill=(50, 30, 10, 230))
+        draw.text((today_data[0] + 15, today_data[1] + 15), str(now.day), font=num_f, fill=(255, 255, 255, 255))
         
-        # Apply identical Fix 1 to Today box text.
-        curr_y = coords[1] + 55
-        for ev in event_map.get(day, []):
+        curr_y = today_data[1] + 75
+        for ev in event_map.get(now.day, []):
             t_str = format_time(ev['start'].get('dateTime'))
-            line = f"{ev['summary']} | {t_str}" if t_str else ev['summary']
-            for chunk in wrap_text(line, ev_f, max_txt_w):
-                if curr_y + 24 > coords[3]: break
-                draw.text((coords[0] + 18, curr_y), chunk, font=ev_f, fill=(255, 255, 255))
-                curr_y += 26
+            line = f"{t_str} | {ev['summary']}" if t_str else ev['summary']
+            wrapped = wrap_text(line, ev_f, box_w - 60)
+            for chunk in wrapped:
+                if curr_y + 30 > today_data[3]: break
+                tw = ev_f.getlength(chunk)
+                # FIX: Use curr_y for the background box position instead of hardcoded 75
+                draw.rounded_rectangle([today_data[0]+(box_w-gap)//2 - tw//2 - 10, curr_y - 12, 
+                                      today_data[0]+(box_w-gap)//2 + tw//2 + 10, curr_y + 12], 
+                                      radius=8, fill=(0, 0, 0, 120))
+                draw.text((today_data[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255), anchor="mm")
+                curr_y += 34
 
-    # Floating Title positioning: preserved
-    tw_idx, td_start, gap_len = find_best_title_center(month_cal)
-    month_text = now.strftime("%B").upper()
-    if tw_idx != -1:
-        # Geometrically center the floating month text in the available 'hole' in the grid.
-        tx = grid_x + (td_start * box_w) + (gap_len * box_w // 2) - (gap // 2)
-        ty = grid_y + (tw_idx * box_h) + (box_h // 2) - (gap // 2)
-        draw.text((tx, ty), month_text, font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
-    else:
-        draw.text((960, 1010), month_text, font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
+    title_text = now.strftime("%B").upper()
+    tx, ty = get_month_title_position(month_cal, box_w, box_h, GLOBAL_MARGIN, GLOBAL_MARGIN)
+    draw.text((tx, ty), title_text, font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
 
     img.convert("RGB").save("out.png")
 
 def post_to_discord():
-    # Preservation of the functioning Discord posting logic.
     if not WEBHOOK_URL: return
     payload = {"embeds": [{"image": {"url": "attachment://calendar.png"}, "color": 16761095}]}
     clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
