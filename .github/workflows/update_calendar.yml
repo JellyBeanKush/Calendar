@@ -1,35 +1,36 @@
-name: Update Stream Calendar
+name: Update Calendar
 
 on:
   schedule:
-    # This runs every 15 minutes, 24/7.
-    # It's the closest you can get to "real-time" without a 3rd party trigger.
-    - cron: '*/15 * * * *'
+    - cron: '0 * * * *' # Runs every hour
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Added a timeout so if it hangs, it doesn't waste your minutes
-    timeout-minutes: 5
-    
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.9'
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client pillow requests
 
-      - name: Run Calendar Script
+      - name: Run python main.py
         env:
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           MESSAGE_ID: ${{ secrets.MESSAGE_ID }}
         run: python main.py
+
+      - name: Commit and Push Calendar Image
+        run: |
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git add out.png
+          git commit -m "Update calendar image" || exit 0
+          git push
