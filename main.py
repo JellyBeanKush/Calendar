@@ -2,58 +2,41 @@ import os, json, datetime, requests, calendar
 try:
     import zoneinfo
 except ImportError:
-    pass # Fallback for older Python versions
+    pass 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from PIL import Image, ImageDraw, ImageFont
 
-# --- BRAND & CONFIG --- 
+# --- THE PURE NEON PALETTE --- 
 BRAND_PURPLE_DARK = (15, 5, 30, 255)
-NEON_PURPLE = (180, 50, 255, 255)
-ACCENT_GOLD = (255, 215, 0, 255) 
+NEON_PURPLE_GLOW = (180, 50, 255, 255)
+ACCENT_GOLD_GLOW = (255, 215, 0, 255) 
 
-# Calendar Settings
-CALENDAR_ID = "9ead18f5408c70117b9a32e804a3b4f1178d95f19abbc240e6220674fdf52ea1@group.calendar.google.com"
-calendar.setfirstweekday(calendar.SUNDAY) 
-
-# GitHub Secret Loading 
+# GitHub Secret Loading
 CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON")
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 MESSAGE_ID = os.getenv("MESSAGE_ID")
+CALENDAR_ID = "9ead18f5408c70117b9a32e804a3b4f1178d95f19abbc240e6220674fdf52ea1@group.calendar.google.com"
+
+calendar.setfirstweekday(calendar.SUNDAY) 
 
 def get_local_now():
-    """Forces the script to evaluate 'now' in Pacific Time so the server doesn't jump to tomorrow at 5PM."""
     try:
         return datetime.datetime.now(zoneinfo.ZoneInfo("America/Los_Angeles"))
     except Exception:
         return datetime.datetime.now()
 
 def get_events(now):
-    """Fetches Google Calendar events for the current month."""
-    if not CREDS_JSON:
-        print("ERROR: GOOGLE_CREDS_JSON missing!")
-        return []
-    
     creds = service_account.Credentials.from_service_account_info(json.loads(CREDS_JSON))
     service = build('calendar', 'v3', credentials=creds)
-    
-    # Use UTC for the API request boundaries to ensure we get everything
     utc_now = datetime.datetime.now(datetime.timezone.utc)
     start = utc_now.replace(day=1, hour=0, minute=0, second=0).isoformat().replace('+00:00', 'Z')
     _, last_day = calendar.monthrange(now.year, now.month)
     end = utc_now.replace(day=last_day, hour=23, minute=59, second=59).isoformat().replace('+00:00', 'Z')
-    
-    res = service.events().list(
-        calendarId=CALENDAR_ID, 
-        timeMin=start, 
-        timeMax=end, 
-        singleEvents=True, 
-        orderBy='startTime'
-    ).execute()
+    res = service.events().list(calendarId=CALENDAR_ID, timeMin=start, timeMax=end, singleEvents=True, orderBy='startTime').execute()
     return res.get('items', [])
 
 def wrap_text(text, font, max_width):
-    """Word-wrapping that safely handles older Pillow versions on GitHub Actions."""
     lines = []
     words = text.split()
     while words:
@@ -64,81 +47,69 @@ def wrap_text(text, font, max_width):
                 w = font.getlength(test_line)
             except AttributeError:
                 w = font.getsize(test_line)[0]
-            
             if w <= max_width:
                 line += words.pop(0) + ' '
             else:
                 break
-                
-        if not line: 
-            line = words.pop(0)
+        if not line: line = words.pop(0)
         lines.append(line.strip())
     return lines
 
-def draw_neon_bloom(draw, coords, color, intensity=12):
-    """Creates a feathered light-bleed effect for a high-quality neon look."""
+def draw_heavy_neon_bloom(draw, coords, color, intensity=16):
+    """Heavy multi-pass bloom for maximum neon saturation."""
     for i in range(intensity, 0, -1):
-        alpha = int(150 * (1 / (i ** 1.3)))
+        alpha = int(180 * (1 / (i ** 1.3)))
         glow_color = (*color[:3], alpha)
-        draw.rounded_rectangle(
-            [coords[0]-i, coords[1]-i, coords[2]+i, coords[3]+i],
-            radius=15, outline=glow_color, width=i
-        )
+        draw.rounded_rectangle([coords[0]-i, coords[1]-i, coords[2]+i, coords[3]+i], radius=15, outline=glow_color, width=i)
     draw.rounded_rectangle(coords, radius=15, outline=(255, 255, 255, 255), width=2)
     draw.rounded_rectangle(coords, radius=15, outline=(*color[:3], 255), width=4)
+
+def find_best_title_center(month_cal):
+    """Finds empty grid space for the floating title."""
+    last_row = month_cal[-1]
+    leading_blanks = sum(1 for d in last_row if d == 0)
+    if leading_blanks >= 2:
+        return len(month_cal)-1, 7 - leading_blanks, leading_blanks
+    row0 = month_cal[0]
+    trailing_blanks = sum(1 for d in row0 if d == 0)
+    if trailing_blanks >= 2:
+        return 0, 0, trailing_blanks
+    return -1, -1, 0 # No space fallback
 
 def create_image(events, now):
     img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE_DARK)
     draw = ImageDraw.Draw(img)
     
-    # Fonts 
+    # Fonts
     font_bold = "arialbd.ttf"
     font_reg = "arial.ttf"
-    title_f = ImageFont.truetype(font_bold, 90) 
+    title_f = ImageFont.truetype(font_bold, 140) # Even larger title
     day_f = ImageFont.truetype(font_reg, 35)
     num_f = ImageFont.truetype(font_reg, 32) 
     ev_f = ImageFont.truetype(font_reg, 22)
 
     month_cal = calendar.monthcalendar(now.year, now.month)
     
-    # 1. Grid Config
-    grid_x, grid_y = 80, 180
-    box_w, box_h, gap = 245, 172, 18
+    # Grid Config: grid_y moved up (80), box_h increased (190) for vertical fill
+    grid_x, grid_y = 80, 80
+    box_w, box_h, gap = 245, 190, 18
     max_txt_w = box_w - 40 
 
-    # 2. Dynamic Title Placement (Locked to Bottom) 
-    last_row = month_cal[-1]
-    leading_blanks = sum(1 for d in last_row if d == 0)
-    
-    if leading_blanks >= 2:
-        title_start_x = grid_x + (7 - leading_blanks) * box_w
-        title_start_y = grid_y + (len(month_cal) - 1) * box_h
-        t_rect = [title_start_x, title_start_y, title_start_x + (leading_blanks * box_w) - gap, title_start_y + box_h - gap]
-        
-        draw_neon_bloom(draw, t_rect, ACCENT_GOLD, intensity=15)
-        draw.text((title_start_x + (leading_blanks * box_w)//2 - 10, title_start_y + box_h//2 - 5), 
-                  now.strftime("%B %Y").upper(), font=title_f, fill=ACCENT_GOLD, anchor="mm")
-    else:
-        draw_neon_bloom(draw, [650, 30, 1270, 140], ACCENT_GOLD, intensity=15)
-        draw.text((960, 85), now.strftime("%B %Y").upper(), font=title_f, fill=ACCENT_GOLD, anchor="mm")
-
-    # 3. Weekday Labels (Sunday Start) 
+    # 1. Weekday Headers
     weekdays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
     for i, d in enumerate(weekdays):
-        draw.text((grid_x + i*box_w + box_w//2, 145), d, font=day_f, fill=ACCENT_GOLD, anchor="mm")
+        draw.text((grid_x + i*box_w + box_w//2, 45), d, font=day_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
 
-    # 4. Map Events to Days Safely
+    # 2. Map Events
     event_map = {d: [] for d in range(1, 32)}
     for e in events:
-        # Grabs just the YYYY-MM-DD from the local time string Google provides
         start_str = e['start'].get('dateTime', e['start'].get('date'))
         try:
-            d_val = int(start_str[8:10])
+            d_val = int(start_str[8:10]) # Direct string slice for speed
             event_map[d_val].append(e)
-        except ValueError:
-            pass # Failsafe if string is malformed
+        except: pass
 
-    # 5. Draw the Calendar Grid
+    # 3. Draw Grid
     for r, week in enumerate(month_cal):
         for c, day in enumerate(week):
             if day == 0: continue
@@ -147,50 +118,51 @@ def create_image(events, now):
             x2, y2 = x1 + box_w - gap, y1 + box_h - gap
             
             if day == now.day:
-                draw_neon_bloom(draw, [x1, y1, x2, y2], ACCENT_GOLD, intensity=10)
-                draw.rounded_rectangle([x1, y1, x2, y2], radius=15, fill=(40, 25, 60, 255))
+                draw_heavy_neon_bloom(draw, [x1, y1, x2, y2], ACCENT_GOLD_GLOW, intensity=14)
+                draw.rounded_rectangle([x1, y1, x2, y2], radius=15, fill=(45, 25, 65, 255))
             else:
-                draw.rounded_rectangle([x1, y1, x2, y2], radius=15, fill=(10, 5, 20, 255), outline=NEON_PURPLE, width=3)
+                draw_heavy_neon_bloom(draw, [x1, y1, x2, y2], NEON_PURPLE_GLOW, intensity=10)
+                draw.rounded_rectangle([x1, y1, x2, y2], radius=15, fill=(15, 5, 25, 255))
             
-            draw.text((x1 + 15, y1 + 10), str(day), font=num_f, fill=(255, 255, 255, 160))
+            draw.text((x1 + 15, y1 + 10), str(day), font=num_f, fill=(255, 255, 255, 180))
 
-            # 6. Render Wrapped Events 
             curr_y = y1 + 55
             for ev in event_map.get(day, []):
-                summary = f"• {ev['summary']}"
-                wrapped_lines = wrap_text(summary, ev_f, max_txt_w)
-                
-                for line in wrapped_lines:
+                wrapped = wrap_text(f"• {ev['summary']}", ev_f, max_txt_w)
+                for line in wrapped:
                     if curr_y + 25 > y2: break
                     draw.text((x1 + 15, curr_y), line, font=ev_f, fill=(255, 255, 255))
                     curr_y += 26
-                
                 if curr_y + 25 > y2: break
+
+    # 4. Floating Neon Title (Month Only, No Border)
+    tw_idx, td_start, gap_len = find_best_title_center(month_cal)
+    month_text = now.strftime("%B").upper()
+    
+    if tw_idx != -1:
+        # Center in the blank grid space
+        tx = grid_x + (td_start * box_w) + (gap_len * box_w // 2) - (gap // 2)
+        ty = grid_y + (tw_idx * box_h) + (box_h // 2) - (gap // 2)
+        # Draw soft glow behind text for "neon" feel
+        draw.text((tx, ty), month_text, font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
+    else:
+        # Fallback if no grid space: float at very bottom center
+        draw.text((960, 1020), month_text, font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
 
     img.convert("RGB").save("out.png")
 
 def post_to_discord():
-    """Updates the Discord message."""
     if not WEBHOOK_URL: return
-    
     payload = {"embeds": [{"image": {"url": "attachment://calendar.png"}, "color": 16761095}]}
     clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
-
-    try:
-        with open("out.png", "rb") as f:
-            files = {"file": ("calendar.png", f, "image/png")}
-            if clean_id:
-                url = f"{WEBHOOK_URL}/messages/{clean_id}"
-                r = requests.patch(url, data={"payload_json": json.dumps(payload)}, files=files)
-                if r.status_code == 404: 
-                    f.seek(0)
-                    requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
-            else:
-                requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
-    except Exception as e:
-        print(f"ERROR posting to Discord: {e}")
+    with open("out.png", "rb") as f:
+        files = {"file": ("calendar.png", f, "image/png")}
+        if clean_id:
+            requests.patch(f"{WEBHOOK_URL}/messages/{clean_id}", data={"payload_json": json.dumps(payload)}, files=files)
+        else:
+            requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
 
 if __name__ == "__main__":
-    current_time = get_local_now()
-    create_image(get_events(current_time), current_time)
+    t = get_local_now()
+    create_image(get_events(t), t)
     post_to_discord()
