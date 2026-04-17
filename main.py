@@ -8,7 +8,7 @@ from googleapiclient.discovery import build
 from PIL import Image, ImageDraw, ImageFont
 
 # --- THE PURE NEON PALETTE --- 
-BRAND_PURPLE_DARK = (15, 5, 30, 255)
+BRAND_PURPLE_DARK = (10, 2, 20, 255)  # Slightly deeper for better contrast
 NEON_PURPLE_GLOW = (180, 50, 255, 255)
 ACCENT_GOLD_GLOW = (255, 215, 0, 255) 
 
@@ -62,10 +62,12 @@ def wrap_text(text, font, max_width):
     return lines
 
 def draw_heavy_neon_bloom(draw, coords, color, intensity=16):
+    """Heavy multi-pass bloom for maximum neon saturation."""
     for i in range(intensity, 0, -1):
         alpha = int(180 * (1 / (i ** 1.3)))
         glow_color = (*color[:3], alpha)
         draw.rounded_rectangle([coords[0]-i, coords[1]-i, coords[2]+i, coords[3]+i], radius=15, outline=glow_color, width=i)
+    # Bright center 'tube'
     draw.rounded_rectangle(coords, radius=15, outline=(255, 255, 255, 255), width=2)
     draw.rounded_rectangle(coords, radius=15, outline=(*color[:3], 255), width=4)
 
@@ -81,19 +83,39 @@ def find_best_title_center(month_cal):
     return -1, -1, 0
 
 def create_image(events, now):
+    # Base Image
     img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE_DARK)
     draw = ImageDraw.Draw(img)
     
+    # 1. ENHANCED BACKGROUND: Vignette Gradient & Scanlines
+    for y in range(1080):
+        # Subtle horizontal scanlines
+        if y % 4 == 0:
+            line_alpha = 15
+        else:
+            line_alpha = 0
+            
+        # Radial-style vignette (darker edges)
+        dist_from_center = abs(540 - y) / 540
+        vignette = int(25 * dist_from_center)
+        r = max(0, BRAND_PURPLE_DARK[0] - vignette)
+        g = max(0, BRAND_PURPLE_DARK[1] - vignette)
+        b = max(0, BRAND_PURPLE_DARK[2] - vignette)
+        
+        draw.line([(0, y), (1920, y)], fill=(r, g, b, 255 - line_alpha), width=1)
+    
+    # Fonts
     font_bold, font_reg = "arialbd.ttf", "arial.ttf"
-    title_f = ImageFont.truetype(font_bold, 145)
+    title_f = ImageFont.truetype(font_bold, 150)
     day_f = ImageFont.truetype(font_reg, 35)
     num_f = ImageFont.truetype(font_reg, 32) 
-    ev_f = ImageFont.truetype(font_reg, 21)
+    ev_time_f = ImageFont.truetype(font_bold, 20) # Bolded time for clarity
+    ev_text_f = ImageFont.truetype(font_reg, 21)
 
     month_cal = calendar.monthcalendar(now.year, now.month)
     grid_x, grid_y = 80, 70 
     box_w, box_h, gap = 245, 195, 18
-    max_txt_w = box_w - 40 
+    max_txt_w = box_w - 45 
 
     # Headers
     weekdays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
@@ -106,53 +128,55 @@ def create_image(events, now):
         d_val = int(start_str[8:10])
         event_map[d_val].append(e)
 
-    # TWO-PASS DRAWING: Standard days first, then Today last to ensure layering
-    today_box = None
+    # 2. TWO-PASS DRAWING (Layer Fix)
+    today_data = None
 
     for r, week in enumerate(month_cal):
         for c, day in enumerate(week):
             if day == 0: continue
-            
             x1, y1 = grid_x + c * box_w, grid_y + r * box_h
             x2, y2 = x1 + box_w - gap, y1 + box_h - gap
             
             if day == now.day:
-                today_box = ([x1, y1, x2, y2], day)
-                continue # Skip for now, draw in second pass
+                today_data = ([x1, y1, x2, y2], day)
+                continue # Render in final pass
             
-            # Regular Day Pass
+            # Draw Purple Neon Box
             draw_heavy_neon_bloom(draw, [x1, y1, x2, y2], NEON_PURPLE_GLOW, intensity=10)
-            draw.rounded_rectangle([x1, y1, x2, y2], radius=15, fill=(15, 5, 25, 255))
+            draw.rounded_rectangle([x1, y1, x2, y2], radius=15, fill=(15, 5, 25, 200))
             draw.text((x1 + 15, y1 + 10), str(day), font=num_f, fill=(255, 255, 255, 180))
 
+            # Render Events
             curr_y = y1 + 55
             for ev in event_map.get(day, []):
-                time_prefix = format_time(ev['start'].get('dateTime'))
-                display_text = f"• {time_prefix} - {ev['summary']}" if time_prefix else f"• {ev['summary']}"
-                wrapped = wrap_text(display_text, ev_f, max_txt_w)
+                t_str = format_time(ev['start'].get('dateTime'))
+                prefix = f"{t_str} | " if t_str else "• "
+                full_text = f"{prefix}{ev['summary']}"
+                
+                wrapped = wrap_text(full_text, ev_text_f, max_txt_w)
                 for line in wrapped:
                     if curr_y + 24 > y2: break
-                    draw.text((x1 + 15, curr_y), line, font=ev_f, fill=(255, 255, 255))
-                    curr_y += 25
+                    draw.text((x1 + 18, curr_y), line, font=ev_text_f, fill=(230, 230, 255))
+                    curr_y += 26
 
-    # Second Pass: Draw "Today" on top of everything else
-    if today_box:
-        coords, day = today_box
-        draw_heavy_neon_bloom(draw, coords, ACCENT_GOLD_GLOW, intensity=16)
-        draw.rounded_rectangle(coords, radius=15, fill=(45, 25, 65, 255))
-        draw.text((coords[0] + 15, coords[1] + 10), str(day), font=num_f, fill=(255, 255, 255, 180))
+    # 3. FINAL PASS: Today Highlight and Title
+    if today_data:
+        coords, day = today_data
+        draw_heavy_neon_bloom(draw, coords, ACCENT_GOLD_GLOW, intensity=18)
+        draw.rounded_rectangle(coords, radius=15, fill=(50, 30, 10, 220))
+        draw.text((coords[0] + 15, coords[1] + 10), str(day), font=num_f, fill=(255, 255, 255, 255))
         
         curr_y = coords[1] + 55
         for ev in event_map.get(day, []):
-            time_prefix = format_time(ev['start'].get('dateTime'))
-            display_text = f"• {time_prefix} - {ev['summary']}" if time_prefix else f"• {ev['summary']}"
-            wrapped = wrap_text(display_text, ev_f, max_txt_w)
+            t_str = format_time(ev['start'].get('dateTime'))
+            prefix = f"{t_str} | " if t_str else "• "
+            wrapped = wrap_text(f"{prefix}{ev['summary']}", ev_text_f, max_txt_w)
             for line in wrapped:
                 if curr_y + 24 > coords[3]: break
-                draw.text((coords[0] + 15, curr_y), line, font=ev_f, fill=(255, 255, 255))
-                curr_y += 25
+                draw.text((coords[0] + 18, curr_y), line, font=ev_text_f, fill=(255, 255, 255))
+                curr_y += 26
 
-    # Title rendering
+    # Floating Title (Month Only)
     tw_idx, td_start, gap_len = find_best_title_center(month_cal)
     month_text = now.strftime("%B").upper()
     if tw_idx != -1:
