@@ -1,14 +1,13 @@
 import os, json, datetime, requests, calendar
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 
 # --- BRAND CONFIG ---
 # HoneyBear Squish Colors
 BRAND_PURPLE = (20, 5, 40)
 NEON_PURPLE = (160, 32, 240)
 ACCENT_GOLD = (255, 215, 0)
-CYAN_GLOW = (0, 255, 255) # Added as a secondary neon highlight
 
 # GitHub Secrets
 CREDS_JSON = json.loads(os.getenv("GOOGLE_CREDS_JSON"))
@@ -38,14 +37,10 @@ def draw_neon_rect(draw, coords, color, intensity=5):
     draw.rounded_rectangle(coords, radius=15, outline=(*color, 255), width=2)
 
 def create_image(events):
-    # 1. Base Canvas & Neon Grid Background
+    # 1. Base Canvas
     img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE)
     draw = ImageDraw.Draw(img)
     
-    # Draw a subtle "Scanline" / Hex pattern effect
-    for y in range(0, 1080, 40):
-        draw.line([(0, y), (1920, y)], fill=(255, 255, 255, 5), width=1)
-
     # 2. Setup Fonts
     font_path = "arial.ttf"
     title_font = ImageFont.truetype(font_path, 110)
@@ -56,8 +51,7 @@ def create_image(events):
     now = datetime.datetime.now()
     month_label = now.strftime("%B %Y").upper()
 
-    # 3. Separated Neon Title Box
-    # Centered at the top with a Golden Yellow glow
+    # 3. Dedicated Neon Title Box
     t_box = [400, 50, 1520, 200]
     draw_neon_rect(draw, t_box, ACCENT_GOLD)
     draw.text((1920//2, 125), month_label, font=title_font, fill=ACCENT_GOLD, anchor="mm")
@@ -67,7 +61,7 @@ def create_image(events):
     col_w, row_h = 250, 140
     pad = 15
 
-    # Neon Weekday Labels
+    # Weekday Labels
     weekdays = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
     for i, day in enumerate(weekdays):
         draw.text((margin_x + i*col_w + col_w//2, margin_y - 60), day, font=day_font, fill=ACCENT_GOLD, anchor="mm")
@@ -88,8 +82,6 @@ def create_image(events):
             x1, y1 = margin_x + c * col_w, margin_y + r * row_h
             x2, y2 = x1 + col_w - pad, y1 + row_h - pad
             
-            # Box Style - Fully Opaque base
-            # Purple borders for general days, Golden for "Today"
             box_fill = (10, 5, 25, 255)
             glow_color = NEON_PURPLE
             
@@ -99,11 +91,8 @@ def create_image(events):
 
             draw.rounded_rectangle([x1, y1, x2, y2], radius=12, fill=box_fill)
             draw_neon_rect(draw, [x1, y1, x2, y2], glow_color, intensity=4)
-            
-            # Date Number
             draw.text((x1 + 15, y1 + 10), str(day), font=num_font, fill=(255, 255, 255, 220))
 
-            # Events (Time - Name)
             if day in event_map:
                 curr_y = y1 + 65
                 for ev in event_map[day][:3]:
@@ -112,7 +101,6 @@ def create_image(events):
                     t_str = ev_dt.strftime('%I%p').lower().lstrip('0')
                     full_txt = f"• {t_str} - {ev['summary']}"
                     
-                    # Scaling
                     f_ev = ImageFont.truetype(font_path, ev_size)
                     while f_ev.getlength(full_txt) > (col_w - 40) and f_ev.size > 12:
                         f_ev = ImageFont.truetype(font_path, f_ev.size - 1)
@@ -121,16 +109,46 @@ def create_image(events):
                     curr_y += 24
 
     img.convert("RGB").save("out.png")
+    print("Image saved as out.png successfully.")
 
 def post_to_discord():
+    if not WEBHOOK_URL:
+        print("ERROR: DISCORD_WEBHOOK_URL is missing!")
+        return
+
     clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
-    payload = {"embeds": [{"image": {"url": "attachment://calendar.png"}, "color": 16761095}]}
-    with open("out.png", "rb") as f:
-        files = {"file": ("calendar.png", f, "image/png")}
-        if clean_id:
-            requests.patch(f"{WEBHOOK_URL}/messages/{clean_id}", data={"payload_json": json.dumps(payload)}, files=files)
-        else:
-            requests.post(f"{WEBHOOK_URL}", data={"payload_json": json.dumps(payload)}, files=files)
+    
+    # Discord requires attachment filenames to match the reference in the embed
+    filename = "calendar.png"
+    payload = {
+        "embeds": [{
+            "image": {"url": f"attachment://{filename}"},
+            "color": 16761095 # Golden Yellow decimal
+        }]
+    }
+    
+    try:
+        with open("out.png", "rb") as f:
+            files = {"file": (filename, f, "image/png")}
+            
+            if clean_id:
+                print(f"Attempting to UPDATE message ID: {clean_id}")
+                url = f"{WEBHOOK_URL}/messages/{clean_id}"
+                response = requests.patch(url, data={"payload_json": json.dumps(payload)}, files=files)
+            else:
+                print("No MESSAGE_ID found. Posting NEW message.")
+                # We add ?wait=true to get the message ID back in the response
+                response = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
+
+            print(f"Discord Response Status: {response.status_code}")
+            if response.status_code >= 400:
+                print(f"Discord Error Details: {response.text}")
+            elif not clean_id:
+                new_id = response.json().get('id')
+                print(f"NEW MESSAGE ID (Add this to your secrets!): {new_id}")
+
+    except Exception as e:
+        print(f"An error occurred while posting: {e}")
 
 if __name__ == "__main__":
     create_image(get_events())
