@@ -94,37 +94,39 @@ def create_image(events):
     combined.convert("RGB").save("out.png")
 
 def post_to_discord():
-    # Use 'out.png' as the internal filename Discord looks for
-    filename = "out.png"
     clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
     
     payload = {
         "embeds": [{
-            "image": {"url": f"attachment://{filename}"},
-            "color": 16758465 # Pink
+            "image": {"url": "attachment://calendar.png"},
+            "color": 16758465
         }]
     }
-    
-    with open(filename, "rb") as f:
-        # Crucial: Using 'file' as the key is the most compatible for single-file webhooks
-        files = {"file": (filename, f, "image/png")}
+
+    with open("out.png", "rb") as f:
+        # Renaming to calendar.png internally helps Discord's cache refreshing
+        files = {"file": ("calendar.png", f, "image/png")}
         
         if clean_id:
-            print(f"Patching message: {clean_id}")
-            # When patching, Discord needs the JSON in a 'payload_json' field if sending files
-            url = f"{WEBHOOK_URL}/messages/{clean_id}"
-            r = requests.patch(url, data={"payload_json": json.dumps(payload)}, files=files)
+            print(f"Attempting to update message: {clean_id}")
+            r = requests.patch(f"{WEBHOOK_URL}/messages/{clean_id}", data={"payload_json": json.dumps(payload)}, files=files)
             
-            if r.status_code == 404:
-                print("Message ID expired. Sending fresh...")
+            # If the update failed for ANY reason (status code 400+)
+            if r.status_code >= 400:
+                print(f"Update failed ({r.status_code}). Sending fresh post...")
+                f.seek(0) # Reset file for re-upload
                 r = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
-                print(f"NEW MESSAGE ID (UPDATE SECRETS!): {r.json().get('id')}")
+                if r.status_code < 300:
+                    print(f"NEW MESSAGE ID: {r.json().get('id')}")
+            else:
+                print("Update successful.")
         else:
-            print("No Message ID. Sending fresh...")
+            print("No Message ID found. Sending fresh post...")
             r = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
-            print(f"NEW MESSAGE ID (UPDATE SECRETS!): {r.json().get('id')}")
-            
-    print(f"Response: {r.status_code} - {r.text}")
+            if r.status_code < 300:
+                print(f"NEW MESSAGE ID: {r.json().get('id')}")
+            else:
+                print(f"Post failed ({r.status_code}): {r.text}")
 
 if __name__ == "__main__":
     create_image(get_events())
