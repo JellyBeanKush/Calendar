@@ -3,166 +3,166 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from PIL import Image, ImageDraw, ImageFont
 
-# --- BRAND CONFIG ---
+# --- BRAND & CONFIG ---
 BRAND_PURPLE_DARK = (15, 5, 30, 255)
-BRAND_PURPLE_LIGHT = (40, 15, 60, 255)
 NEON_PURPLE = (180, 50, 255, 255)
 ACCENT_GOLD = (255, 215, 0, 255) 
 
-# GitHub Secrets
-CREDS_JSON = json.loads(os.getenv("GOOGLE_CREDS_JSON"))
+# Calendar Settings
+CALENDAR_ID = "9ead18f5408c70117b9a32e804a3b4f1178d95f19abbc240e6220674fdf52ea1@group.calendar.google.com"
+calendar.setfirstweekday(calendar.SUNDAY) #
+
+# GitHub Secret Loading
+CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON")
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 MESSAGE_ID = os.getenv("MESSAGE_ID")
-CALENDAR_ID = "9ead18f5408c70117b9a32e804a3b4f1178d95f19abbc240e6220674fdf52ea1@group.calendar.google.com"
-
-# Set Calendar to Sunday Start
-calendar.setfirstweekday(calendar.SUNDAY)
 
 def get_events():
-    creds = service_account.Credentials.from_service_account_info(CREDS_JSON)
+    """Fetches Google Calendar events for the current month."""
+    if not CREDS_JSON:
+        print("ERROR: GOOGLE_CREDS_JSON missing!")
+        return []
+    
+    creds = service_account.Credentials.from_service_account_info(json.loads(CREDS_JSON))
     service = build('calendar', 'v3', credentials=creds)
     now = datetime.datetime.utcnow()
     start = now.replace(day=1, hour=0, minute=0, second=0).isoformat() + 'Z'
     _, last_day = calendar.monthrange(now.year, now.month)
     end = now.replace(day=last_day, hour=23, minute=59, second=59).isoformat() + 'Z'
-    res = service.events().list(calendarId=CALENDAR_ID, timeMin=start, timeMax=end, singleEvents=True, orderBy='startTime').execute()
+    
+    res = service.events().list(
+        calendarId=CALENDAR_ID, 
+        timeMin=start, 
+        timeMax=end, 
+        singleEvents=True, 
+        orderBy='startTime'
+    ).execute()
     return res.get('items', [])
 
-def draw_heavy_neon(draw, coords, color, intensity=15):
-    """Enhanced Bloom: Layered transparency to simulate light bleed."""
+def draw_neon_bloom(draw, coords, color, intensity=12):
+    """Creates a feathered light-bleed effect for a true neon glow."""
     for i in range(intensity, 0, -1):
-        # Soften the glow as it spreads further out
-        alpha = int(140 * (1 / (i ** 1.3)))
+        # Quadratic falloff for softer edges
+        alpha = int(150 * (1 / (i ** 1.3)))
         glow_color = (*color[:3], alpha)
         draw.rounded_rectangle(
             [coords[0]-i, coords[1]-i, coords[2]+i, coords[3]+i],
             radius=15, outline=glow_color, width=i
         )
-    # Brightest inner 'tube'
+    # Bright inner core
     draw.rounded_rectangle(coords, radius=15, outline=(255, 255, 255, 255), width=2)
     draw.rounded_rectangle(coords, radius=15, outline=(*color[:3], 255), width=4)
 
-def find_dynamic_title_spot(month_cal):
-    """Calculates best empty spot in the Sunday-start grid."""
-    # Top row check (First week)
+def find_best_title_spot(month_cal):
+    """Scans the Sunday-start grid for large empty spaces."""
     row0 = month_cal[0]
-    trailing_blanks = 0
-    for day in reversed(row0):
-        if day == 0: trailing_blanks += 1
-        else: break
-            
-    # Bottom row check (Last week)
+    trailing_blanks = sum(1 for d in row0 if d == 0)
+    
     last_row = month_cal[-1]
-    leading_blanks = 0
-    for day in last_row:
-        if day == 0: leading_blanks += 1
-        else: break
+    leading_blanks = sum(1 for d in last_row if d == 0)
 
-    # Logic to prioritize the gap for the HoneyBear title
+    # If first week has space (e.g. Mon-Tue are empty)
     if trailing_blanks >= 3:
         return 0, 7 - trailing_blanks
-    elif leading_blanks >= 3:
+    # If last week has space (e.g. Thu-Sat are empty)
+    if leading_blanks >= 3:
         return len(month_cal)-1, 0
-    return 0, 2 # Default fallback
-
-def draw_gradient(draw, rect, color_top, color_bottom):
-    x0, y0, x1, y1 = rect
-    h = y1 - y0
-    for y in range(h):
-        ratio = y / h
-        r = int(color_top[0] * (1 - ratio) + color_bottom[0] * ratio)
-        g = int(color_top[1] * (1 - ratio) + color_bottom[1] * ratio)
-        b = int(color_top[2] * (1 - ratio) + color_bottom[2] * ratio)
-        draw.line([(x0, y0 + y), (x1, y0 + y)], fill=(r, g, b, 255), width=1)
+    
+    return 0, 2 # Fallback to top center-ish
 
 def create_image(events):
-    img = Image.new("RGBA", (1920, 1080))
+    # Base Image creation
+    img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE_DARK)
     draw = ImageDraw.Draw(img)
     
-    # 1. Background Gradient
-    royal_blue_dark = (5, 5, 40, 255)
-    draw_gradient(draw, (0, 0, 1920, 1080), BRAND_PURPLE_DARK, royal_blue_dark)
-
-    # 2. Setup Fonts
-    font_path = "arial.ttf"
-    title_font = ImageFont.truetype(font_path, 85) 
-    day_font = ImageFont.truetype(font_path, 35)   
-    num_font = ImageFont.truetype(font_path, 35) # Smaller day numbers
-    ev_size = 20
+    # Load Fonts
+    font_bold = "arialbd.ttf"
+    font_reg = "arial.ttf"
+    title_f = ImageFont.truetype(font_bold, 80)
+    day_f = ImageFont.truetype(font_reg, 35)
+    num_f = ImageFont.truetype(font_reg, 32) # Smaller numbers
+    ev_f = ImageFont.truetype(font_reg, 20)
 
     now = datetime.datetime.now()
-    month_label = now.strftime("%B %Y").upper()
     month_cal = calendar.monthcalendar(now.year, now.month)
-
-    # 3. Dynamic Title Capsule
-    grid_start_y, grid_start_x = 280, 80
-    box_w, box_h, gap = 245, 150, 18
-    tr_week_idx, tr_day_idx = find_dynamic_title_spot(month_cal)
-
-    t_box_cx = grid_start_x + tr_day_idx * box_w + (box_w * 1.5 if tr_day_idx == 0 else box_w // 2)
-    t_box_cy = grid_start_y + tr_week_idx * box_h + box_h // 2
-    t_box = [t_box_cx - 300, t_box_cy - 60, t_box_cx + 300, t_box_cy + 60]
     
-    draw_heavy_neon(draw, t_box, ACCENT_GOLD, intensity=12)
-    draw.text((t_box_cx, t_box_cy - 5), month_label, font=title_font, fill=ACCENT_GOLD, anchor="mm")
+    # 1. Dynamic Title Placement
+    grid_x, grid_y = 80, 280
+    box_w, box_h = 245, 150
+    tw_idx, td_idx = find_best_title_spot(month_cal)
+    
+    # Calculate capsule position based on empty grid spot
+    cx = grid_x + td_idx * box_w + (box_w * 1.5 if td_idx == 0 else box_w // 2)
+    cy = grid_y + tw_idx * box_h + box_h // 2
+    t_box = [cx - 300, cy - 60, cx + 300, cy + 60]
+    
+    draw_neon_bloom(draw, t_box, ACCENT_GOLD, intensity=15)
+    draw.text((cx, cy - 5), now.strftime("%B %Y").upper(), font=title_f, fill=ACCENT_GOLD, anchor="mm")
 
-    # 4. Sunday-Start Weekday Labels
+    # 2. Weekday Headers (Sunday Start)
     weekdays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
-    for i, day in enumerate(weekdays):
-        draw.text((grid_start_x + i*box_w + box_w//2, 240), day, font=day_font, fill=ACCENT_GOLD, anchor="mm")
+    for i, d in enumerate(weekdays):
+        draw.text((grid_x + i*box_w + box_w//2, 240), d, font=day_f, fill=ACCENT_GOLD, anchor="mm")
 
-    # Event Mapping
-    event_map = {}
+    # 3. Map Events to Days
+    event_map = {d: [] for d in range(1, 32)}
     for e in events:
         start_str = e['start'].get('dateTime', e['start'].get('date'))
-        dt = datetime.datetime.fromisoformat(start_str.replace('Z', '+00:00'))
-        event_map.setdefault(dt.day, []).append(e)
+        d_val = datetime.datetime.fromisoformat(start_str.replace('Z', '+00:00')).day
+        event_map[d_val].append(e)
 
-    # 5. Drawing Day Cells
+    # 4. Draw the Calendar Grid
     for r, week in enumerate(month_cal):
         for c, day in enumerate(week):
-            if day == 0: continue
+            if day == 0: continue # Skip empty days
             
-            x1, y1 = grid_start_x + c * box_w, grid_start_y + r * box_h
-            x2, y2 = x1 + box_w - gap, y1 + box_h - gap
+            x1, y1 = grid_x + c * box_w, grid_y + r * box_h
+            x2, y2 = x1 + box_w - 18, y1 + box_h - 18
             
             if day == now.day:
-                draw_heavy_neon(draw, [x1, y1, x2, y2], ACCENT_GOLD, intensity=10)
+                # Today's cell: Accent Gold bloom
+                draw_neon_bloom(draw, [x1, y1, x2, y2], ACCENT_GOLD, intensity=10)
                 draw.rounded_rectangle([x1, y1, x2, y2], radius=15, fill=(40, 25, 60, 255))
             else:
-                draw.rounded_rectangle([x1, y1, x2, y2], radius=15, fill=(10, 5, 20, 255), outline=NEON_PURPLE, width=2)
+                # Regular cell: Neon Purple border
+                draw.rounded_rectangle([x1, y1, x2, y2], radius=15, fill=(10, 5, 20, 255), outline=NEON_PURPLE, width=3)
             
-            draw.text((x1 + 15, y1 + 10), str(day), font=num_font, fill=(255, 255, 255, 200))
+            # Day Number
+            draw.text((x1 + 15, y1 + 10), str(day), font=num_f, fill=(255, 255, 255, 180))
 
-            if day in event_map:
-                curr_y = y1 + 60
-                for ev in event_map[day][:4]: 
-                    s_iso = ev['start'].get('dateTime', ev['start'].get('date'))
-                    ev_dt = datetime.datetime.fromisoformat(s_iso.replace('Z', '+00:00'))
-                    t_str = ev_dt.strftime('%I%p').lower().lstrip('0')
-                    full_txt = f"• {t_str} - {ev['summary']}"
-                    draw.text((x1 + 15, curr_y), full_txt, font=ImageFont.truetype(font_path, ev_size), fill=(255, 255, 255))
-                    curr_y += 24
+            # Event Text
+            curr_ev_y = y1 + 55
+            for ev in event_map.get(day, [])[:4]: # Max 4 per box
+                txt = f"• {ev['summary'][:22]}"
+                draw.text((x1 + 15, curr_ev_y), txt, font=ev_f, fill=(255, 255, 255))
+                curr_ev_y += 24
 
     img.convert("RGB").save("out.png")
 
 def post_to_discord():
-    if not WEBHOOK_URL: return
-    clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
+    """Patches the existing message or posts a new one if missing."""
+    if not WEBHOOK_URL:
+        print("ERROR: DISCORD_WEBHOOK_URL missing!")
+        return
+    
     payload = {"embeds": [{"image": {"url": "attachment://calendar.png"}, "color": 16761095}]}
+    clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
+
     try:
         with open("out.png", "rb") as f:
             files = {"file": ("calendar.png", f, "image/png")}
             if clean_id:
                 url = f"{WEBHOOK_URL}/messages/{clean_id}"
                 r = requests.patch(url, data={"payload_json": json.dumps(payload)}, files=files)
-                if r.status_code == 404:
+                if r.status_code == 404: # If message was deleted, post fresh
                     f.seek(0)
                     r = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
             else:
                 r = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
-            print(f"Status: {r.status_code} | ID: {r.json().get('id', 'N/A')}")
-    except Exception as e: print(f"Error: {e}")
+            
+            print(f"Discord Status: {r.status_code}")
+    except Exception as e:
+        print(f"ERROR posting to Discord: {e}")
 
 if __name__ == "__main__":
     create_image(get_events())
