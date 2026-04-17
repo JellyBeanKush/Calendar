@@ -26,20 +26,26 @@ def create_image(events):
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     draw_ov = ImageDraw.Draw(overlay)
     
+    # Static Fonts
     font_title = ImageFont.truetype("arial.ttf", 95)
     font_days = ImageFont.truetype("arial.ttf", 50)
     font_date_num = ImageFont.truetype("arial.ttf", 45)
-    font_event = ImageFont.truetype("arial.ttf", 24)
+    
+    # Starting point for event font size
+    BASE_EVENT_SIZE = 24
 
     now = datetime.datetime.now()
     month_cal = calendar.monthcalendar(now.year, now.month)
     month_name = now.strftime("%B %Y").upper()
 
+    # Draw Title
     draw_ov.text((1920//2, 100), month_name, font=font_title, fill=(255, 182, 193), anchor="mm")
 
+    # Grid Settings
     margin_x, margin_y = 50, 240
     cell_w, cell_h = 265, 160
     padding = 8
+    max_text_width = cell_w - 30 # Padding inside the box
 
     weekdays = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
     for i, day in enumerate(weekdays):
@@ -56,11 +62,13 @@ def create_image(events):
             if day == 0: continue
             x1, y1 = margin_x + c * cell_w, margin_y + r * cell_h
             x2, y2 = x1 + cell_w - padding, y1 + cell_h - padding
+            
             box_color = (15, 15, 25, 240) 
             border_color = (255, 255, 255, 80)
             if day == now.day:
                 box_color = (255, 182, 193, 180)
                 border_color = (255, 255, 255, 200)
+
             draw_ov.rectangle([x1, y1, x2, y2], fill=box_color, outline=border_color, width=3)
             draw_ov.text((x1 + 15, y1 + 10), str(day), font=font_date_num, fill=(255, 255, 255, 230))
 
@@ -71,36 +79,35 @@ def create_image(events):
                     dt_ev = datetime.datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
                     time_str = dt_ev.strftime('%I%p').lower().lstrip('0')
                     full_text = f"• {time_str} - {ev['summary']}"
-                    display_text = (full_text[:28] + '..') if len(full_text) > 28 else full_text
-                    draw_ov.text((x1 + 15, ev_y), display_text, font=font_event, fill="white")
+                    
+                    # --- DYNAMIC FONT SCALING ---
+                    current_size = BASE_EVENT_SIZE
+                    current_font = ImageFont.truetype("arial.ttf", current_size)
+                    
+                    # Shrink the font until the text fits the box width
+                    while current_font.getlength(full_text) > max_text_width and current_size > 12:
+                        current_size -= 1
+                        current_font = ImageFont.truetype("arial.ttf", current_size)
+                    
+                    draw_ov.text((x1 + 15, ev_y), full_text, font=current_font, fill="white")
                     ev_y += 30
 
     combined = Image.alpha_composite(base, overlay)
     combined.convert("RGB").save("out.png")
 
 def post_to_discord():
-    print(f"Current MESSAGE_ID: {MESSAGE_ID}")
-    files = {"file": ("out.png", open("out.png", "rb"))}
-    
-    # We strip spaces just in case the Secret has one
     clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID else None
-
-    if clean_id and clean_id.lower() != "none":
-        print(f"Attempting to PATCH message {clean_id}...")
-        url = f"{WEBHOOK_URL}/messages/{clean_id}"
-        r = requests.patch(url, files=files)
-        if r.status_code == 404:
-            print("Error: Message ID not found. It might have been deleted. Sending new...")
+    with open("out.png", "rb") as f:
+        files = {"file": ("out.png", f)}
+        if clean_id and clean_id.lower() != "none":
+            url = f"{WEBHOOK_URL}/messages/{clean_id}"
+            r = requests.patch(url, files=files)
+            if r.status_code == 404:
+                r = requests.post(f"{WEBHOOK_URL}?wait=true", files=files)
+                print(f"NEW MESSAGE ID (UPDATE YOUR SECRETS!): {r.json().get('id')}")
+        else:
             r = requests.post(f"{WEBHOOK_URL}?wait=true", files=files)
-            print(f"SAVE THIS NEW ID: {r.json().get('id')}")
-    else:
-        print("No Message ID found. Sending NEW message...")
-        url = f"{WEBHOOK_URL}?wait=true"
-        r = requests.post(url, files=files)
-        if r.status_code == 200:
-            print(f"SAVE THIS NEW ID: {r.json().get('id')}")
-    
-    print(f"Final Status: {r.status_code}")
+            print(f"NEW MESSAGE ID (UPDATE YOUR SECRETS!): {r.json().get('id')}")
 
 if __name__ == "__main__":
     create_image(get_events())
