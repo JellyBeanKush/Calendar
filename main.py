@@ -8,12 +8,13 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from PIL import Image, ImageDraw, ImageFont
 
-# --- BRAND CONFIG ---
+# --- BRAND CONFIG --- 
 BRAND_PURPLE_DARK = (10, 2, 20, 255)
 BRAND_PURPLE_LIGHT = (40, 15, 60, 255)
 NEON_PURPLE_GLOW = (180, 50, 255, 255)
 ACCENT_GOLD_GLOW = (255, 215, 0, 255) 
 
+# GitHub Secrets
 CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON")
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 MESSAGE_ID = os.getenv("MESSAGE_ID")
@@ -65,35 +66,47 @@ def draw_heavy_neon_bloom(draw, coords, color, intensity=16):
     draw.rounded_rectangle(coords, radius=15, outline=(*color[:3], 255), width=4)
 
 def get_blank_center(month_cal, box_w, box_h, grid_x, grid_y):
-    """Finds the largest contiguous blank space to center the title."""
+    """Refined logic to find the geometric center of contiguous blank areas."""
+    # Check bottom row (last week)
     last_row = month_cal[-1]
     blanks = [i for i, d in enumerate(last_row) if d == 0]
-    if len(blanks) >= 2:
-        center_x = grid_x + (blanks[0] * box_w) + (len(blanks) * box_w // 2)
-        center_y = grid_y + (len(month_cal)-1) * box_h + (box_h // 2)
-        return center_x, center_y
-    return 960, 1010 # Default bottom center
+    if len(blanks) >= 3:
+        # Center horizontally across the range of blank columns
+        start_x = grid_x + (blanks[0] * box_w)
+        width_span = len(blanks) * box_w
+        return start_x + (width_span // 2), grid_y + (len(month_cal)-1) * box_h + (box_h // 2)
+    
+    # Check top row (first week)
+    row0 = month_cal[0]
+    blanks0 = [i for i, d in enumerate(row0) if d == 0]
+    if len(blanks0) >= 3:
+        start_x = grid_x + (blanks0[0] * box_w)
+        width_span = len(blanks0) * box_w
+        return start_x + (width_span // 2), grid_y + (box_h // 2)
+        
+    return 960, 1010 # Default safety spot
 
 def create_image(events, now):
     img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE_DARK)
     draw = ImageDraw.Draw(img)
     
-    # 1. Background Texture
+    # 1. Background Texture & Vignette
     midnight_edges = (5, 0, 15, 255)
     max_diag = math.sqrt(960**2 + 540**2)
-    for y in range(0, 1080, 2): # Optimization: step 2 for background fill
-        for x in range(0, 1920, 2):
-            dist = math.sqrt((960 - x)**2 + (540 - y)**2)
-            ratio = min(dist / max_diag, 1.0)
-            r = int(BRAND_PURPLE_LIGHT[0] * (1 - ratio) + midnight_edges[0] * ratio)
-            g = int(BRAND_PURPLE_LIGHT[1] * (1 - ratio) + midnight_edges[1] * ratio)
-            b = int(BRAND_PURPLE_LIGHT[2] * (1 - ratio) + midnight_edges[2] * ratio)
-            # Scanline overlay
-            alpha = 230 if y % 4 == 0 else 255
-            draw.rectangle([x, y, x+1, y+1], fill=(r, g, b, alpha))
+    for y in range(1080):
+        # Optimized: only draw pixels that change or use line drawing where possible
+        dist_y_factor = (540 - y)**2
+        for x in range(1920):
+            if y % 4 == 0: # Scanline logic
+                dist = math.sqrt((960 - x)**2 + dist_y_factor)
+                ratio = min(dist / max_diag, 1.0)
+                r = int(BRAND_PURPLE_LIGHT[0] * (1 - ratio) + midnight_edges[0] * ratio)
+                g = int(BRAND_PURPLE_LIGHT[1] * (1 - ratio) + midnight_edges[1] * ratio)
+                b = int(BRAND_PURPLE_LIGHT[2] * (1 - ratio) + midnight_edges[2] * ratio)
+                draw.point((x, y), fill=(r, g, b, 230))
     
-    # 2. Fonts
-    title_f = ImageFont.truetype("ariblk.ttf", 150)
+    # 2. Setup Fonts
+    title_f = ImageFont.truetype("ariblk.ttf", 150) # Arial Black
     day_f = ImageFont.truetype("arial.ttf", 35)
     num_f = ImageFont.truetype("arial.ttf", 32) 
     ev_f = ImageFont.truetype("arial.ttf", 21)
@@ -103,6 +116,7 @@ def create_image(events, now):
     box_w, box_h, gap = 245, 195, 18
     max_txt_w = box_w - 40 
 
+    # Day Headers
     weekdays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
     for i, d in enumerate(weekdays):
         draw.text((grid_x + i*box_w + box_w//2, 35), d, font=day_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
@@ -112,7 +126,7 @@ def create_image(events, now):
         start_str = e['start'].get('dateTime', e['start'].get('date'))
         event_map[int(start_str[8:10])].append(e)
 
-    # 3. Two-Pass Rendering for Layering
+    # 3. Render Calendar Grid
     today_box = None
     for r, week in enumerate(month_cal):
         for c, day in enumerate(week):
@@ -127,16 +141,17 @@ def create_image(events, now):
             draw.rounded_rectangle(coords, radius=15, fill=(15, 5, 25, 200))
             draw.text((coords[0] + 15, coords[1] + 10), str(day), font=num_f, fill=(255, 255, 255, 180))
 
-            # Center-Aligned Events
+            # CENTER ALIGNED TEXT
             curr_y = coords[1] + 65
             for ev in event_map.get(day, []):
                 t_str = format_time(ev['start'].get('dateTime'))
                 line = f"{t_str} | {ev['summary']}" if t_str else ev['summary']
                 for chunk in wrap_text(line, ev_f, max_txt_w):
                     if curr_y + 24 > coords[3]: break
-                    draw.text((coords[0] + box_w//2 - gap//2, curr_y), chunk, font=ev_f, fill=(230, 230, 255), anchor="mm")
+                    draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(230, 230, 255), anchor="mm")
                     curr_y += 26
 
+    # 4. Highlight Today
     if today_box:
         coords, day = today_box
         draw_heavy_neon_bloom(draw, coords, ACCENT_GOLD_GLOW, intensity=18)
@@ -149,10 +164,10 @@ def create_image(events, now):
             line = f"{t_str} | {ev['summary']}" if t_str else ev['summary']
             for chunk in wrap_text(line, ev_f, max_txt_w):
                 if curr_y + 24 > coords[3]: break
-                draw.text((coords[0] + box_w//2 - gap//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255), anchor="mm")
+                draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255), anchor="mm")
                 curr_y += 26
 
-    # 4. Smart Title Placement
+    # 5. Centered Month Title
     tx, ty = get_blank_center(month_cal, box_w, box_h, grid_x, grid_y)
     draw.text((tx, ty), now.strftime("%B").upper(), font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
 
