@@ -14,7 +14,6 @@ BRAND_PURPLE_LIGHT = (40, 15, 60, 255)
 NEON_PURPLE_GLOW = (180, 50, 255, 255)
 ACCENT_GOLD_GLOW = (255, 215, 0, 255) 
 
-# GitHub Secrets
 CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON")
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 MESSAGE_ID = os.getenv("MESSAGE_ID")
@@ -58,7 +57,6 @@ def wrap_text(text, font, max_width):
     return lines
 
 def draw_heavy_neon_bloom(draw, coords, color, intensity=16):
-    """High-intensity bloom for depth and stream-ready aesthetics."""
     for i in range(intensity, 0, -1):
         alpha = int(180 * (1 / (i ** 1.3)))
         glow_color = (*color[:3], alpha)
@@ -66,28 +64,11 @@ def draw_heavy_neon_bloom(draw, coords, color, intensity=16):
     draw.rounded_rectangle(coords, radius=15, outline=(255, 255, 255, 255), width=2)
     draw.rounded_rectangle(coords, radius=15, outline=(*color[:3], 255), width=4)
 
-def get_blank_center(month_cal, box_w, box_h, grid_x, grid_y):
-    """Geometrically centers the title within large contiguous blank areas."""
-    last_row = month_cal[-1]
-    blanks = [i for i, d in enumerate(last_row) if d == 0]
-    if len(blanks) >= 3:
-        start_x = grid_x + (blanks[0] * box_w)
-        width_span = len(blanks) * box_w
-        return start_x + (width_span // 2), grid_y + (len(month_cal)-1) * box_h + (box_h // 2)
-    
-    row0 = month_cal[0]
-    blanks0 = [i for i, d in enumerate(row0) if d == 0]
-    if len(blanks0) >= 3:
-        start_x = grid_x + (blanks0[0] * box_w)
-        width_span = len(blanks0) * box_w
-        return start_x + (width_span // 2), grid_y + (box_h // 2)
-    return 960, 960 # Fallback centered near bottom
-
 def create_image(events, now):
     img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE_DARK)
     draw = ImageDraw.Draw(img)
     
-    # 1. Background Scanline Texture & Vignette
+    # 1. Background Texture
     midnight_edges = (5, 0, 15, 255)
     max_diag = math.sqrt(960**2 + 540**2)
     for y in range(1080):
@@ -101,24 +82,26 @@ def create_image(events, now):
                 b = int(BRAND_PURPLE_LIGHT[2] * (1 - ratio) + midnight_edges[2] * ratio)
                 draw.point((x, y), fill=(r, g, b, 230))
     
-    # 2. Optimized Grid Math for Equal Borders
-    box_w, box_h = 255, 185 # Expanded dimensions
-    gap = 18
+    # 2. SYMMETRY ENGINE: CALCULATE EXPANDED BOXES
+    # We want the margin to match the original left-side look (approx 100px)
+    GLOBAL_MARGIN = 100 
     
-    # Calculate margin_x for perfect horizontal centering:
-    # (1920 image width - (7 columns * box_w)) / 2
-    margin_x = (1920 - (7 * box_w)) // 2 # Result: ~67px
+    # Calculate box_w to fill width: (1920 - (2 * margin)) / 7
+    box_w = (1920 - (2 * GLOBAL_MARGIN)) // 7
     
-    # Calculate margin_y for perfect vertical centering:
+    # Get current month rows
     month_cal = calendar.monthcalendar(now.year, now.month)
     num_rows = len(month_cal)
-    # (1080 image height - (rows * box_h)) / 2
-    margin_y = (1080 - (num_rows * box_h)) // 2 # Result: ~80-100px depending on month
+    
+    # Calculate box_h to fill height: (1080 - (2 * margin)) / num_rows
+    box_h = (1080 - (2 * GLOBAL_MARGIN)) // num_rows
+    
+    gap = 18 # Internal padding between neon boxes
 
-    # 3. Setup Fonts
-    title_f = ImageFont.truetype("ariblk.ttf", 170) 
-    num_f = ImageFont.truetype("arial.ttf", 34) 
-    ev_f = ImageFont.truetype("arial.ttf", 23)
+    # 3. Fonts
+    title_f = ImageFont.truetype("ariblk.ttf", 150) 
+    num_f = ImageFont.truetype("arial.ttf", 36) 
+    ev_f = ImageFont.truetype("arial.ttf", 24)
 
     event_map = {d: [] for d in range(1, 32)}
     for e in events:
@@ -126,53 +109,40 @@ def create_image(events, now):
         event_map[int(start_str[8:10])].append(e)
 
     # 4. Render Grid
-    today_box = None
     for r, week in enumerate(month_cal):
         for c, day in enumerate(week):
             if day == 0: continue
             coords = [
-                margin_x + c * box_w, 
-                margin_y + r * box_h, 
-                margin_x + c * box_w + box_w - gap, 
-                margin_y + r * box_h + box_h - gap
+                GLOBAL_MARGIN + c * box_w, 
+                GLOBAL_MARGIN + r * box_h, 
+                GLOBAL_MARGIN + c * box_w + box_w - gap, 
+                GLOBAL_MARGIN + r * box_h + box_h - gap
             ]
             
-            if day == now.day:
-                today_box = (coords, day)
-                continue
+            # Draw Today with Gold Accent, others with Purple
+            is_today = (day == now.day)
+            color = ACCENT_GOLD_GLOW if is_today else NEON_PURPLE_GLOW
+            bg_fill = (50, 30, 10, 220) if is_today else (15, 5, 25, 200)
             
-            draw_heavy_neon_bloom(draw, coords, NEON_PURPLE_GLOW, intensity=10)
-            draw.rounded_rectangle(coords, radius=15, fill=(15, 5, 25, 200))
-            draw.text((coords[0] + 18, coords[1] + 12), str(day), font=num_f, fill=(255, 255, 255, 180))
+            draw_heavy_neon_bloom(draw, coords, color, intensity=18 if is_today else 10)
+            draw.rounded_rectangle(coords, radius=15, fill=bg_fill)
+            draw.text((coords[0] + 20, coords[1] + 15), str(day), font=num_f, fill=(255, 255, 255, 255 if is_today else 180))
 
             # Center-aligned event text
-            curr_y = coords[1] + 68
+            curr_y = coords[1] + 75
             for ev in event_map.get(day, []):
                 t_str = format_time(ev['start'].get('dateTime'))
                 line = f"{t_str} | {ev['summary']}" if t_str else ev['summary']
-                for chunk in wrap_text(line, ev_f, box_w - 45):
-                    if curr_y + 24 > coords[3]: break
-                    draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(230, 230, 255), anchor="mm")
-                    curr_y += 30
+                for chunk in wrap_text(line, ev_f, box_w - 50):
+                    if curr_y + 26 > coords[3]: break
+                    draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255), anchor="mm")
+                    curr_y += 32
 
-    if today_box:
-        coords, day = today_box
-        draw_heavy_neon_bloom(draw, coords, ACCENT_GOLD_GLOW, intensity=18)
-        draw.rounded_rectangle(coords, radius=15, fill=(50, 30, 10, 220))
-        draw.text((coords[0] + 18, coords[1] + 12), str(day), font=num_f, fill=(255, 255, 255, 255))
-        
-        curr_y = coords[1] + 68
-        for ev in event_map.get(day, []):
-            t_str = format_time(ev['start'].get('dateTime'))
-            line = f"{t_str} | {ev['summary']}" if t_str else ev['summary']
-            for chunk in wrap_text(line, ev_f, box_w - 45):
-                if curr_y + 24 > coords[3]: break
-                draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255), anchor="mm")
-                curr_y += 30
-
-    # 5. Month Title
-    tx, ty = get_blank_center(month_cal, box_w, box_h, margin_x, margin_y)
-    draw.text((tx, ty), now.strftime("%B").upper(), font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
+    # 5. DYNAMIC TITLE POSITIONING
+    # We place the title exactly in the vertical middle of the top negative space margin.
+    title_text = now.strftime("%B %Y").upper()
+    title_center_y = GLOBAL_MARGIN // 2
+    draw.text((960, title_center_y), title_text, font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
 
     img.convert("RGB").save("out.png")
 
