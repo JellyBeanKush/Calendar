@@ -21,14 +21,20 @@ def get_events():
     res = service.events().list(calendarId=CALENDAR_ID, timeMin=start_month, timeMax=end_month, singleEvents=True, orderBy='startTime').execute()
     return res.get('items', [])
 
+def get_font(name, size):
+    try:
+        return ImageFont.truetype(name, size)
+    except:
+        return ImageFont.load_default()
+
 def create_image(events):
     base = Image.open("bg.png").convert("RGBA")
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     draw_ov = ImageDraw.Draw(overlay)
     
-    font_title = ImageFont.truetype("arial.ttf", 95)
-    font_days = ImageFont.truetype("arial.ttf", 50)
-    font_date_num = ImageFont.truetype("arial.ttf", 45)
+    font_title = get_font("arial.ttf", 95)
+    font_days = get_font("arial.ttf", 50)
+    font_date_num = get_font("arial.ttf", 45)
     BASE_EVENT_SIZE = 24
 
     now = datetime.datetime.now()
@@ -76,10 +82,10 @@ def create_image(events):
                     full_text = f"• {time_str} - {ev['summary']}"
                     
                     current_size = BASE_EVENT_SIZE
-                    current_font = ImageFont.truetype("arial.ttf", current_size)
+                    current_font = get_font("arial.ttf", current_size)
                     while current_font.getlength(full_text) > max_text_width and current_size > 12:
                         current_size -= 1
-                        current_font = ImageFont.truetype("arial.ttf", current_size)
+                        current_font = get_font("arial.ttf", current_size)
                     
                     draw_ov.text((x1 + 15, ev_y), full_text, font=current_font, fill="white")
                     ev_y += 30
@@ -88,32 +94,37 @@ def create_image(events):
     combined.convert("RGB").save("out.png")
 
 def post_to_discord():
+    # Use 'out.png' as the internal filename Discord looks for
+    filename = "out.png"
     clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
     
-    # Adding a period as content helps Discord "wake up" to the attachment
     payload = {
-        "payload_json": json.dumps({
-            "content": ".", 
-            "embeds": [{
-                "image": {"url": "attachment://out.png"},
-                "color": 0xFFB6C1
-            }]
-        })
+        "embeds": [{
+            "image": {"url": f"attachment://{filename}"},
+            "color": 16758465 # Pink
+        }]
     }
     
-    with open("out.png", "rb") as f:
-        # Key change: using "file" instead of "files[0]"
-        files = {"file": ("out.png", f)}
+    with open(filename, "rb") as f:
+        # Crucial: Using 'file' as the key is the most compatible for single-file webhooks
+        files = {"file": (filename, f, "image/png")}
         
         if clean_id:
+            print(f"Patching message: {clean_id}")
+            # When patching, Discord needs the JSON in a 'payload_json' field if sending files
             url = f"{WEBHOOK_URL}/messages/{clean_id}"
-            r = requests.patch(url, data=payload, files=files)
+            r = requests.patch(url, data={"payload_json": json.dumps(payload)}, files=files)
+            
             if r.status_code == 404:
-                r = requests.post(f"{WEBHOOK_URL}?wait=true", data=payload, files=files)
-                print(f"NEW ID: {r.json().get('id')}")
+                print("Message ID expired. Sending fresh...")
+                r = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
+                print(f"NEW MESSAGE ID (UPDATE SECRETS!): {r.json().get('id')}")
         else:
-            r = requests.post(f"{WEBHOOK_URL}?wait=true", data=payload, files=files)
-            print(f"NEW ID: {r.json().get('id')}")
+            print("No Message ID. Sending fresh...")
+            r = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
+            print(f"NEW MESSAGE ID (UPDATE SECRETS!): {r.json().get('id')}")
+            
+    print(f"Response: {r.status_code} - {r.text}")
 
 if __name__ == "__main__":
     create_image(get_events())
