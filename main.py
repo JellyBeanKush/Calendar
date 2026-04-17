@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 BRAND_PURPLE_DARK = (10, 2, 20, 255)
 BRAND_PURPLE_LIGHT = (40, 15, 60, 255)
 NEON_PURPLE_GLOW = (180, 50, 255, 255)
-# UPDATED: Richer, more golden yellow
+# Warm Goldenrod yellow
 ACCENT_GOLD_GLOW = (218, 165, 32, 255) 
 GREYED_OUT_COLOR = (40, 40, 60, 150)
 
@@ -78,10 +78,8 @@ def get_month_title_position(month_cal, box_w, box_h, margin_x, margin_y):
     return (x_start + x_end) // 2, (y_start + y_end) // 2
 
 def draw_centered_events(draw, coords, events, font_path, box_w, gap, is_grey=False):
-    # FIXED: Logic to dynamically shrink text if many events exist
+    # Dynamic text shrinking logic
     base_font_size = 25
-    line_height = 34
-    
     all_lines = []
     for ev in events:
         t_str = format_time(ev['start'].get('dateTime'))
@@ -89,11 +87,7 @@ def draw_centered_events(draw, coords, events, font_path, box_w, gap, is_grey=Fa
         line = f"{t_str} | {summary}" if t_str else summary
         all_lines.append(line)
 
-    # Determine required font size to fit everything
     current_size = base_font_size
-    current_font = ImageFont.truetype(font_path, current_size)
-    
-    # Wrap text and check height
     def get_layout(f_size):
         f = ImageFont.truetype(font_path, f_size)
         lh = int(f_size * 1.35)
@@ -103,10 +97,9 @@ def draw_centered_events(draw, coords, events, font_path, box_w, gap, is_grey=Fa
         return wrapped, lh
 
     chunks, lh = get_layout(current_size)
-    available_h = (coords[3] - coords[1]) - 70 # Offset for date number
+    available_h = (coords[3] - coords[1]) - 75 # Padding for date number
     
-    # Shrink font until height fits
-    while len(chunks) * lh > available_h and current_size > 14:
+    while len(chunks) * lh > available_h and current_size > 12:
         current_size -= 1
         chunks, lh = get_layout(current_size)
 
@@ -114,7 +107,7 @@ def draw_centered_events(draw, coords, events, font_path, box_w, gap, is_grey=Fa
 
     final_font = ImageFont.truetype(font_path, current_size)
     total_text_h = len(chunks) * lh
-    start_y = coords[1] + 65 + (available_h - total_text_h) // 2
+    start_y = coords[1] + 70 + (available_h - total_text_h) // 2
     
     curr_y = start_y
     for chunk in chunks:
@@ -122,7 +115,6 @@ def draw_centered_events(draw, coords, events, font_path, box_w, gap, is_grey=Fa
         bg_alpha = 60 if is_grey else 100
         text_alpha = 100 if is_grey else 255
         
-        # Centered Pill Background
         draw.rounded_rectangle([coords[0]+(box_w-gap)//2 - tw//2 - 8, curr_y - (lh//2) + 2, 
                                 coords[0]+(box_w-gap)//2 + tw//2 + 8, curr_y + (lh//2) - 2], 
                                 radius=6, fill=(0, 0, 0, bg_alpha))
@@ -134,7 +126,7 @@ def create_image(events, now):
     img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE_DARK)
     draw = ImageDraw.Draw(img)
     
-    # Background Scanlines Logic
+    # Background Scanlines
     midnight_edges = (5, 0, 15, 255)
     max_diag = math.sqrt(960**2 + 540**2)
     for y in range(0, 1080, 4):
@@ -170,23 +162,25 @@ def create_image(events, now):
             coords = [GLOBAL_MARGIN + c * box_w, GLOBAL_MARGIN + r * box_h, 
                       GLOBAL_MARGIN + c * box_w + box_w - gap, GLOBAL_MARGIN + r * box_h + box_h - gap]
             
-            if day == now.day:
-                today_data = coords
-                continue
-
             day_events = event_map.get(day, [])
             is_no_stream = any("NO STREAM" in ev.get('summary', '').upper() for ev in day_events)
             is_weekend = (c == 0 or c == 6)
             has_events = len(day_events) > 0
 
+            if day == now.day:
+                today_data = coords
+                continue
+
+            # Off-day or No Stream day logic
             if is_no_stream or (is_weekend and not has_events):
                 draw.rounded_rectangle(coords, radius=15, outline=(100, 100, 120, 50), width=2, fill=(20, 20, 30, 150))
                 draw.text((coords[0] + 18, coords[1] + 18), str(day), font=num_f, fill=(255, 255, 255, 60))
                 
-                if is_no_stream:
-                    no_stream_events = [ev for ev in day_events if "NO STREAM" in ev.get('summary', '').upper()]
-                    draw_centered_events(draw, coords, no_stream_events, font_path, box_w, gap, is_grey=True)
+                # FIXED: Always draw all events, even on greyed out days
+                if has_events:
+                    draw_centered_events(draw, coords, day_events, font_path, box_w, gap, is_grey=True)
             else:
+                # Active Stream day logic
                 draw_heavy_neon_bloom(draw, coords, NEON_PURPLE_GLOW, intensity=10)
                 draw.rounded_rectangle(coords, radius=15, fill=(15, 5, 25, 200))
                 draw.text((coords[0] + 18, coords[1] + 18), str(day), font=num_f, fill=(255, 255, 255, 130))
