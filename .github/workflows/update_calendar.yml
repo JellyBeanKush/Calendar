@@ -2,14 +2,16 @@ name: Update Stream Calendar
 
 on:
   schedule:
-    # This runs at 12:00 PM UTC every day (approx 5:00 AM PST)
-    - cron: '0 12 * * *'
-  # Allows you to manually trigger the update from the GitHub "Actions" tab
+    # This runs every 15 minutes, 24/7.
+    # It's the closest you can get to "real-time" without a 3rd party trigger.
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Added a timeout so if it hangs, it doesn't waste your minutes
+    timeout-minutes: 5
     
     steps:
       - name: Checkout Repository
@@ -27,7 +29,6 @@ jobs:
 
       - name: Run Calendar Script
         env:
-          # These must be set in Settings > Secrets and variables > Actions
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           MESSAGE_ID: ${{ secrets.MESSAGE_ID }}
