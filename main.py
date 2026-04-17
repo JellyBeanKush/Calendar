@@ -1,4 +1,4 @@
-import os, json, datetime, requests, calendar
+import os, json, datetime, requests, calendar, time
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from PIL import Image, ImageDraw, ImageFont
@@ -22,7 +22,6 @@ def get_events():
     return res.get('items', [])
 
 def create_image(events):
-    # Use the bg.png in your repo
     base = Image.open("bg.png").convert("RGBA")
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     draw_ov = ImageDraw.Draw(overlay)
@@ -91,9 +90,10 @@ def create_image(events):
 def post_to_discord():
     clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
     
-    # Structure for a clean image-only update
+    # Adding a period as content helps Discord "wake up" to the attachment
     payload = {
         "payload_json": json.dumps({
+            "content": ".", 
             "embeds": [{
                 "image": {"url": "attachment://out.png"},
                 "color": 0xFFB6C1
@@ -102,13 +102,13 @@ def post_to_discord():
     }
     
     with open("out.png", "rb") as f:
-        files = {"files[0]": ("out.png", f)}
+        # Key change: using "file" instead of "files[0]"
+        files = {"file": ("out.png", f)}
         
         if clean_id:
             url = f"{WEBHOOK_URL}/messages/{clean_id}"
             r = requests.patch(url, data=payload, files=files)
             if r.status_code == 404:
-                print("ID not found, sending fresh post...")
                 r = requests.post(f"{WEBHOOK_URL}?wait=true", data=payload, files=files)
                 print(f"NEW ID: {r.json().get('id')}")
         else:
