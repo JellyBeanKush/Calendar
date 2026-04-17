@@ -15,6 +15,9 @@ NEON_PURPLE_GLOW = (180, 50, 255, 255)
 ACCENT_GOLD_GLOW = (218, 165, 32, 255) 
 GREYED_OUT_COLOR = (40, 40, 60, 150)
 
+# UPDATED: Target path for Mix It Up
+SAVE_PATH = r"F:\MIX IT UP MEDIA\Videos and Images\calendar\out.png"
+
 CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON")
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 MESSAGE_ID = os.getenv("MESSAGE_ID")
@@ -187,31 +190,31 @@ def create_image(events, now):
     tx, ty = get_month_title_position(month_cal, box_w, box_h, GLOBAL_MARGIN, GLOBAL_MARGIN)
     draw.text((tx, ty), title_text, font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
 
-    img.convert("RGB").save("out.png")
+    # Final Save to F: Drive
+    img.convert("RGB").save(SAVE_PATH)
 
 def post_to_discord():
     if not WEBHOOK_URL: return
     
-    # Try to delete the old message first to prevent "Double Image" glitch
     clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
     if clean_id:
         try:
             requests.delete(f"{WEBHOOK_URL}/messages/{clean_id}")
         except:
-            pass # Skip if delete fails (e.g. message already gone)
+            pass 
 
     payload = {"embeds": [{"image": {"url": "attachment://calendar.png"}, "color": 16761095}]}
-    with open("out.png", "rb") as f:
+    with open(SAVE_PATH, "rb") as f:
         files = {"file": ("calendar.png", f, "image/png")}
-        # Post fresh message
         res = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
         
-        # LOG THIS ID: You should update your GitHub secret with the new ID printed here!
         if res.status_code in [200, 201, 204]:
             new_id = res.json().get('id')
             print(f"NEW MESSAGE ID: {new_id}")
 
 if __name__ == "__main__":
+    # Ensure directory exists before saving
+    os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
     t = get_local_now()
     create_image(get_events(t), t)
     post_to_discord()
