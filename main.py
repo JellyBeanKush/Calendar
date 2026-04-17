@@ -64,6 +64,29 @@ def draw_heavy_neon_bloom(draw, coords, color, intensity=16):
     draw.rounded_rectangle(coords, radius=15, outline=(255, 255, 255, 255), width=2)
     draw.rounded_rectangle(coords, radius=15, outline=(*color[:3], 255), width=4)
 
+def get_month_title_position(month_cal, box_w, box_h, margin_x, margin_y):
+    """Finds the best blank space (top or bottom) and centers the title there."""
+    # Check top row (row 0)
+    top_blanks = [i for i, day in enumerate(month_cal[0]) if day == 0]
+    # Check bottom row (last row)
+    bot_blanks = [i for i, day in enumerate(month_cal[-1]) if day == 0]
+    
+    # Logic: Center in the row with more blank space
+    if len(top_blanks) >= len(bot_blanks):
+        target_row = 0
+        blanks = top_blanks
+    else:
+        target_row = len(month_cal) - 1
+        blanks = bot_blanks
+
+    # Calculate center based on the horizontal span of blank boxes
+    start_x = margin_x + (blanks[0] * box_w)
+    end_x = margin_x + (blanks[-1] * box_w) + box_w
+    center_x = (start_x + end_x) // 2
+    center_y = margin_y + (target_row * box_h) + (box_h // 2)
+    
+    return center_x, center_y
+
 def create_image(events, now):
     img = Image.new("RGBA", (1920, 1080), BRAND_PURPLE_DARK)
     draw = ImageDraw.Draw(img)
@@ -82,24 +105,16 @@ def create_image(events, now):
                 b = int(BRAND_PURPLE_LIGHT[2] * (1 - ratio) + midnight_edges[2] * ratio)
                 draw.point((x, y), fill=(r, g, b, 230))
     
-    # 2. SYMMETRY ENGINE: CALCULATE EXPANDED BOXES
-    # We want the margin to match the original left-side look (approx 100px)
+    # 2. SYMMETRY ENGINE
     GLOBAL_MARGIN = 100 
-    
-    # Calculate box_w to fill width: (1920 - (2 * margin)) / 7
     box_w = (1920 - (2 * GLOBAL_MARGIN)) // 7
-    
-    # Get current month rows
     month_cal = calendar.monthcalendar(now.year, now.month)
     num_rows = len(month_cal)
-    
-    # Calculate box_h to fill height: (1080 - (2 * margin)) / num_rows
     box_h = (1080 - (2 * GLOBAL_MARGIN)) // num_rows
-    
-    gap = 18 # Internal padding between neon boxes
+    gap = 18
 
     # 3. Fonts
-    title_f = ImageFont.truetype("ariblk.ttf", 150) 
+    title_f = ImageFont.truetype("ariblk.ttf", 160) 
     num_f = ImageFont.truetype("arial.ttf", 36) 
     ev_f = ImageFont.truetype("arial.ttf", 24)
 
@@ -119,7 +134,6 @@ def create_image(events, now):
                 GLOBAL_MARGIN + r * box_h + box_h - gap
             ]
             
-            # Draw Today with Gold Accent, others with Purple
             is_today = (day == now.day)
             color = ACCENT_GOLD_GLOW if is_today else NEON_PURPLE_GLOW
             bg_fill = (50, 30, 10, 220) if is_today else (15, 5, 25, 200)
@@ -128,7 +142,6 @@ def create_image(events, now):
             draw.rounded_rectangle(coords, radius=15, fill=bg_fill)
             draw.text((coords[0] + 20, coords[1] + 15), str(day), font=num_f, fill=(255, 255, 255, 255 if is_today else 180))
 
-            # Center-aligned event text
             curr_y = coords[1] + 75
             for ev in event_map.get(day, []):
                 t_str = format_time(ev['start'].get('dateTime'))
@@ -138,11 +151,11 @@ def create_image(events, now):
                     draw.text((coords[0] + (box_w - gap)//2, curr_y), chunk, font=ev_f, fill=(255, 255, 255), anchor="mm")
                     curr_y += 32
 
-    # 5. DYNAMIC TITLE POSITIONING
-    # We place the title exactly in the vertical middle of the top negative space margin.
-    title_text = now.strftime("%B %Y").upper()
-    title_center_y = GLOBAL_MARGIN // 2
-    draw.text((960, title_center_y), title_text, font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
+    # 5. CORRECTED MONTH TITLE POSITIONING
+    # Removed year, centered in the row (top or bottom) with more empty space.
+    title_text = now.strftime("%B").upper()
+    tx, ty = get_month_title_position(month_cal, box_w, box_h, GLOBAL_MARGIN, GLOBAL_MARGIN)
+    draw.text((tx, ty), title_text, font=title_f, fill=ACCENT_GOLD_GLOW, anchor="mm")
 
     img.convert("RGB").save("out.png")
 
