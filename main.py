@@ -194,31 +194,40 @@ def create_image(events, now):
 def post_to_discord():
     if not WEBHOOK_URL: return
     
-    # Memory: Try to read the old ID from our text file
+    # Try to read the old ID from our tracking file
     old_id = None
     if os.path.exists(ID_FILE):
         with open(ID_FILE, "r") as f:
             old_id = f.read().strip()
-    
-    # Delete old message if we found an ID
-    if old_id and old_id.lower() != 'none':
-        try:
-            requests.delete(f"{WEBHOOK_URL}/messages/{old_id}")
-            print(f"Deleted old message: {old_id}")
-        except:
-            print("Message ID was likely already deleted or invalid.")
 
     payload = {"embeds": [{"image": {"url": "attachment://calendar.png"}, "color": 16761095}]}
+    
     with open(SAVE_PATH, "rb") as f:
         files = {"file": ("calendar.png", f, "image/png")}
-        res = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
         
+        # 1. Attempt SILENT EDIT if we have an ID
+        if old_id and old_id.lower() != 'none':
+            try:
+                res = requests.patch(
+                    f"{WEBHOOK_URL}/messages/{old_id}?wait=true", 
+                    data={"payload_json": json.dumps(payload)}, 
+                    files=files
+                )
+                if res.status_code == 200:
+                    print(f"SILENT UPDATE SUCCESSFUL for message: {old_id}")
+                    return # Mission accomplished
+                else:
+                    print(f"Silent update failed (Status {res.status_code}). Reposting...")
+            except Exception as e:
+                print(f"Error during patch: {e}")
+
+        # 2. FALLBACK: POST NEW if edit failed or no ID exists
+        res = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
         if res.status_code in [200, 201, 204]:
             new_id = res.json().get('id')
-            # Memory: Save the new ID to the text file for the next run
             with open(ID_FILE, "w") as f:
                 f.write(str(new_id))
-            print(f"NEW MESSAGE ID SAVED: {new_id}")
+            print(f"CREATED NEW BASE MESSAGE: {new_id}")
 
 if __name__ == "__main__":
     t = get_local_now()
