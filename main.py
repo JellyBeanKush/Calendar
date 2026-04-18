@@ -194,40 +194,58 @@ def create_image(events, now):
 def post_to_discord():
     if not WEBHOOK_URL: return
     
-    # Try to read the old ID from our tracking file
+    # 1. Read the message ID we saved from the last run
     old_id = None
     if os.path.exists(ID_FILE):
         with open(ID_FILE, "r") as f:
             old_id = f.read().strip()
 
-    payload = {"embeds": [{"image": {"url": "attachment://calendar.png"}, "color": 16761095}]}
+    # 2. Define the JSON payload. 
+    # 'attachments': [] is vital to prevent "ghost" images when editing (PATCH).
+    payload = {
+        "embeds": [{
+            "image": {"url": "attachment://calendar.png"}, 
+            "color": 16761095
+        }],
+        "attachments": [] 
+    }
     
+    if not os.path.exists(SAVE_PATH):
+        print(f"Error: {SAVE_PATH} not found!")
+        return
+
     with open(SAVE_PATH, "rb") as f:
         files = {"file": ("calendar.png", f, "image/png")}
         
-        # 1. Attempt SILENT EDIT if we have an ID
+        # 3. SILENT UPDATE (PATCH)
+        # If an ID exists, we try to update the existing message silently.
         if old_id and old_id.lower() != 'none':
             try:
+                # wait=true ensures we get a confirmation response from Discord
                 res = requests.patch(
                     f"{WEBHOOK_URL}/messages/{old_id}?wait=true", 
                     data={"payload_json": json.dumps(payload)}, 
                     files=files
                 )
                 if res.status_code == 200:
-                    print(f"SILENT UPDATE SUCCESSFUL for message: {old_id}")
-                    return # Mission accomplished
+                    print(f"SILENT UPDATE SUCCESS: Updated message {old_id}")
+                    return 
                 else:
-                    print(f"Silent update failed (Status {res.status_code}). Reposting...")
+                    print(f"Silent update failed (Status {res.status_code}). Message may be deleted.")
             except Exception as e:
-                print(f"Error during patch: {e}")
+                print(f"Error during patch update: {e}")
 
-        # 2. FALLBACK: POST NEW if edit failed or no ID exists
+        # 4. FALLBACK: NEW POST (POST)
+        # If no ID was found or the edit failed, we make one brand new post.
+        # We remove 'attachments' because that's only for PATCHing.
+        del payload["attachments"]
         res = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
         if res.status_code in [200, 201, 204]:
             new_id = res.json().get('id')
+            # Save the new ID so we can edit it 15 minutes from now.
             with open(ID_FILE, "w") as f:
                 f.write(str(new_id))
-            print(f"CREATED NEW BASE MESSAGE: {new_id}")
+            print(f"NEW MESSAGE CREATED & ID SAVED: {new_id}")
 
 if __name__ == "__main__":
     t = get_local_now()
