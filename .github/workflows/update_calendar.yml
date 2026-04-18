@@ -1,36 +1,45 @@
-name: Update Calendar
+name: Sync Discord Calendar
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # This means "Every 15 minutes"
-  workflow_dispatch:
+    # This triggers the bot every 15 minutes (4 times an hour)
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # This adds a "Run Workflow" button in GitHub so you can test it manually
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    
+    # This permission is CRITICAL to allow the bot to save the message_id.txt
+    permissions:
+      contents: write
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
-          pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client pillow requests
+          pip install requests google-api-python-client google-auth pillow
 
-      - name: Run python main.py
+      - name: Run Calendar Bot
         env:
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          MESSAGE_ID: ${{ secrets.MESSAGE_ID }}
         run: python main.py
 
-     - name: Commit and Push Message ID
+      - name: Save and Commit Message ID
         run: |
-          git config --global user.name "CalendarBot"
-          git config --global user.email "bot@github.com"
-          git add message_id.txt
-          git commit -m "Update Discord message ID [skip ci]" || echo "No changes to commit"
-          git push
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          # Only add and commit if the ID file was created or changed
+          if [ -f message_id.txt ]; then
+            git add message_id.txt
+            git commit -m "Update Discord message ID [skip ci]" || echo "No changes to commit"
+            git push
+          fi
