@@ -27,10 +27,10 @@ jobs:
           MESSAGE_ID: ${{ secrets.MESSAGE_ID }}
         run: python main.py
 
-      - name: Commit and Push Calendar Image
+      - name: Commit and Push Calendar Image and ID
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          git add out.png
-          git commit -m "Update calendar image" || exit 0
+          git add out.png message_id.txt
+          git commit -m "Update calendar image and message ID" || exit 0
           git push
