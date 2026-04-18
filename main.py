@@ -14,12 +14,12 @@ BRAND_PURPLE_LIGHT = (40, 15, 60, 255)
 NEON_PURPLE_GLOW = (180, 50, 255, 255)
 ACCENT_GOLD_GLOW = (218, 165, 32, 255) 
 
-# Saving locally to the repo root so GitHub Actions can find and push it
+# Paths for GitHub Actions
 SAVE_PATH = "out.png"
+ID_FILE = "message_id.txt"
 
 CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON")
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-MESSAGE_ID = os.getenv("MESSAGE_ID")
 CALENDAR_ID = "9ead18f5408c70117b9a32e804a3b4f1178d95f19abbc240e6220674fdf52ea1@group.calendar.google.com"
 
 calendar.setfirstweekday(calendar.SUNDAY) 
@@ -193,21 +193,32 @@ def create_image(events, now):
 
 def post_to_discord():
     if not WEBHOOK_URL: return
-    clean_id = str(MESSAGE_ID).strip() if MESSAGE_ID and str(MESSAGE_ID).lower() != 'none' else None
     
-    # Delete old message to avoid Discord's caching/rendering bugs
-    if clean_id:
+    # Memory: Try to read the old ID from our text file
+    old_id = None
+    if os.path.exists(ID_FILE):
+        with open(ID_FILE, "r") as f:
+            old_id = f.read().strip()
+    
+    # Delete old message if we found an ID
+    if old_id and old_id.lower() != 'none':
         try:
-            requests.delete(f"{WEBHOOK_URL}/messages/{clean_id}")
+            requests.delete(f"{WEBHOOK_URL}/messages/{old_id}")
+            print(f"Deleted old message: {old_id}")
         except:
-            pass 
+            print("Message ID was likely already deleted or invalid.")
 
     payload = {"embeds": [{"image": {"url": "attachment://calendar.png"}, "color": 16761095}]}
     with open(SAVE_PATH, "rb") as f:
         files = {"file": ("calendar.png", f, "image/png")}
         res = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
+        
         if res.status_code in [200, 201, 204]:
-            print(f"NEW MESSAGE ID: {res.json().get('id')}")
+            new_id = res.json().get('id')
+            # Memory: Save the new ID to the text file for the next run
+            with open(ID_FILE, "w") as f:
+                f.write(str(new_id))
+            print(f"NEW MESSAGE ID SAVED: {new_id}")
 
 if __name__ == "__main__":
     t = get_local_now()
