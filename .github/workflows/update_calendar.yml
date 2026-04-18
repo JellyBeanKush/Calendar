@@ -2,7 +2,7 @@ name: Update Calendar
 
 on:
   schedule:
-    - cron: '0 * * * *' # Runs every hour
+    - cron: '*/15 * * * *' # This means "Every 15 minutes"
   workflow_dispatch:
 
 jobs:
