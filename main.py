@@ -150,8 +150,15 @@ def create_image(events, now):
     event_map = {d: [] for d in range(1, 32)}
     for e in events:
         start_str = e['start'].get('dateTime', e['start'].get('date'))
-        event_map[int(start_str[8:10])].append(e)
-
+        
+        # Extract year, month, and day safely
+        ev_year = int(start_str[0:4])
+        ev_month = int(start_str[5:7])
+        ev_day = int(start_str[8:10])
+        
+        # ONLY add the event if it matches the current year and month being drawn
+        if ev_year == now.year and ev_month == now.month:
+            event_map[ev_day].append(e)
     today_data = None
     for r, week in enumerate(month_cal):
         for c, day in enumerate(week):
