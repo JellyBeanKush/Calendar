@@ -33,13 +33,14 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python main.py
 
-      - name: Save and Commit Message ID
+      - name: Save and Commit Changes
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          # Only add and commit if the ID file was created or changed
-          if [ -f message_id.txt ]; then
-            git add message_id.txt
-            git commit -m "Update Discord message ID [skip ci]" || echo "No changes to commit"
-            git push
-          fi
+          
+          # Add both the message ID and the updated calendar image
+          git add message_id.txt out.png
+          
+          # Commit and push if anything changed
+          git commit -m "Update calendar data and image [skip ci]" || echo "No changes to commit"
+          git push
