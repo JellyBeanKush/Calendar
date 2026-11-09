@@ -41,7 +41,10 @@ def get_events(now):
 def format_time(time_str):
     if not time_str or 'T' not in time_str: return ""
     dt = datetime.datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-    dt_local = dt.astimezone(datetime.timezone(datetime.timedelta(hours=-7)))
+    try:
+        dt_local = dt.astimezone(zoneinfo.ZoneInfo("America/Los_Angeles"))
+    except:
+        dt_local = dt.astimezone(datetime.timezone(datetime.timedelta(hours=-7)))
     return dt_local.strftime("%I%p").lstrip('0').lower()
 
 def wrap_text(text, font, max_width):
@@ -159,23 +162,24 @@ def create_image(events, now):
         # ONLY add the event if it matches the current year and month being drawn
         if ev_year == now.year and ev_month == now.month:
             event_map[ev_day].append(e)
+
     today_data = None
     for r, week in enumerate(month_cal):
         for c, day in enumerate(week):
             if day == 0: continue
             coords = [GLOBAL_MARGIN + c * box_w, GLOBAL_MARGIN + r * box_h, 
-                      GLOBAL_MARGIN + c * box_w + box_w - gap, GLOBAL_MARGIN + r * box_h + box_h - gap]
+                     GLOBAL_MARGIN + c * box_w + box_w - gap, GLOBAL_MARGIN + r * box_h + box_h - gap]
             
             day_events = event_map.get(day, [])
             is_no_stream = any("NO STREAM" in ev.get('summary', '').upper() for ev in day_events)
-            is_weekend = (c == 0 or c == 6)
             has_events = len(day_events) > 0
 
             if day == now.day:
                 today_data = coords
                 continue
 
-            if is_no_stream or (is_weekend and not has_events):
+            # Days without streams or events use the dimmed grey style; days with events get neon purple bloom
+            if not has_events or is_no_stream:
                 draw.rounded_rectangle(coords, radius=15, outline=(100, 100, 120, 50), width=2, fill=(20, 20, 30, 150))
                 draw.text((coords[0] + 18, coords[1] + 18), str(day), font=num_f, fill=(255, 255, 255, 60))
                 if has_events:
@@ -225,10 +229,8 @@ def post_to_discord():
         files = {"file": ("calendar.png", f, "image/png")}
         
         # 3. SILENT UPDATE (PATCH)
-        # If an ID exists, we try to update the existing message silently.
         if old_id and old_id.lower() != 'none':
             try:
-                # wait=true ensures we get a confirmation response from Discord
                 res = requests.patch(
                     f"{WEBHOOK_URL}/messages/{old_id}?wait=true", 
                     data={"payload_json": json.dumps(payload)}, 
@@ -243,13 +245,10 @@ def post_to_discord():
                 print(f"Error during patch update: {e}")
 
         # 4. FALLBACK: NEW POST (POST)
-        # If no ID was found or the edit failed, we make one brand new post.
-        # We remove 'attachments' because that's only for PATCHing.
         del payload["attachments"]
         res = requests.post(f"{WEBHOOK_URL}?wait=true", data={"payload_json": json.dumps(payload)}, files=files)
         if res.status_code in [200, 201, 204]:
             new_id = res.json().get('id')
-            # Save the new ID so we can edit it 15 minutes from now.
             with open(ID_FILE, "w") as f:
                 f.write(str(new_id))
             print(f"NEW MESSAGE CREATED & ID SAVED: {new_id}")
